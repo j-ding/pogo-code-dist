@@ -99,9 +99,27 @@ function logScan(data) {
     isRepeat ? 'Yes' : 'No'
   ]);
 
+  if (data.code) {
+    deactivateCodeAfterRedeem(data.code);
+  }
+
   return ContentService
     .createTextOutput(JSON.stringify({ success: true, repeat: isRepeat }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function deactivateCodeAfterRedeem(code) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Codes');
+  if (!sheet) return;
+
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(code)) {
+      sheet.getRange(i + 1, 5).setValue('No');
+      return;
+    }
+  }
 }
 
 function checkRepeat(sheet, code, trainerName) {
