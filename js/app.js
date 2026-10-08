@@ -19,6 +19,9 @@ function saveCodes(codes) {
 }
 
 function getSetting(key) {
+  if (key === STORAGE_KEYS.SCRIPT_URL && typeof SITE_CONFIG !== 'undefined' && SITE_CONFIG.scriptUrl) {
+    return SITE_CONFIG.scriptUrl;
+  }
   try {
     return localStorage.getItem(key) || '';
   } catch {

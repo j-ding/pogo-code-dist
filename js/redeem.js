@@ -5,6 +5,9 @@ function getParam(name) {
 }
 
 function getScriptUrl() {
+  if (typeof SITE_CONFIG !== 'undefined' && SITE_CONFIG.scriptUrl) {
+    return SITE_CONFIG.scriptUrl;
+  }
   try {
     return localStorage.getItem('pogo_script_url') || '';
   } catch {
