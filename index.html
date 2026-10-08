@@ -103,7 +103,10 @@
       <!-- Active Codes Tab -->
       <section id="active-codes" class="tab-content">
         <div class="card">
-          <h2>Active Codes</h2>
+          <div class="codes-header">
+            <h2>Active Codes</h2>
+            <button id="sync-codes" class="btn btn-small btn-secondary" onclick="syncAndRender()">Sync</button>
+          </div>
           <div id="codes-list" class="codes-list">
             <p class="empty-state">No codes added yet.</p>
           </div>

@@ -388,6 +388,17 @@ header h1 {
   flex-wrap: wrap;
 }
 
+.codes-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.codes-header h2 {
+  margin-bottom: 0;
+}
+
 /* Codes List */
 .codes-list {
   display: flex;

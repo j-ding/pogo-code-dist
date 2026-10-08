@@ -442,6 +442,13 @@ async function syncCodesFromSheet() {
   } catch {}
 }
 
+async function syncAndRender() {
+  showToast('Syncing...');
+  await syncCodesFromSheet();
+  renderCodesList();
+  showToast('Codes synced');
+}
+
 function postToSheet(scriptUrl, payload) {
   if (navigator.sendBeacon) {
     navigator.sendBeacon(scriptUrl, JSON.stringify(payload));
