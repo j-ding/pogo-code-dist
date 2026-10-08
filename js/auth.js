@@ -1,13 +1,13 @@
 let appConfig = null;
 
-async function loadConfig() {
-  try {
-    const res = await fetch('config.json');
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
+function loadConfig() {
+  if (typeof SITE_CONFIG !== 'undefined' && SITE_CONFIG.admins && SITE_CONFIG.admins.length > 0) {
+    return Promise.resolve({ admins: SITE_CONFIG.admins });
   }
+
+  return fetch('config.json')
+    .then(res => res.ok ? res.json() : null)
+    .catch(() => null);
 }
 
 function getSession() {
