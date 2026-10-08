@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redeem Code - PoGo Code Dist</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="container redeem-container">
+    <header>
+      <h1>PoGo Code Dist</h1>
+      <p class="subtitle">Pokemon Go Code Redemption</p>
+    </header>
+
+    <!-- Step 1: Enter Trainer Name -->
+    <section id="step-trainer" class="card">
+      <h2>Enter Your Trainer Name</h2>
+      <p>Before we redirect you to redeem your code, please enter your Pokemon Go trainer name.</p>
+      <form id="trainer-form">
+        <div class="form-group">
+          <label for="trainer-name">Trainer Name</label>
+          <input type="text" id="trainer-name" placeholder="Your trainer name" required autofocus>
+        </div>
+        <button type="submit" class="btn btn-primary btn-large">Redeem Code</button>
+      </form>
+      <div id="code-display" class="code-display">
+        <span>Code: </span><strong id="display-code"></strong>
+      </div>
+    </section>
+
+    <!-- Step 2: Redirecting -->
+    <section id="step-redirect" class="card hidden">
+      <h2>Redirecting...</h2>
+      <p>Logging your scan and redirecting to the Pokemon Go store.</p>
+      <div class="spinner"></div>
+      <p class="redirect-note">If you're not redirected automatically, <a id="manual-link" href="#">click here</a>.</p>
+    </section>
+
+    <!-- Error State -->
+    <section id="step-error" class="card hidden">
+      <h2>Missing Code</h2>
+      <p>No redemption code was found in the URL. Please scan a valid QR code.</p>
+    </section>
+  </div>
+
+  <script src="js/redeem.js"></script>
+</body>
+</html>

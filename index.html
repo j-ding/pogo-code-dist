@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PoGo Code Dist</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>PoGo Code Dist</h1>
+      <p class="subtitle">Pokemon Go Code Distribution</p>
+    </header>
+
+    <section id="setup-banner" class="banner hidden">
+      <p>Set your Google Apps Script URL in <strong>Settings</strong> to enable logging.</p>
+    </section>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="add-code">Add Code</button>
+      <button class="tab" data-tab="active-codes">Active Codes</button>
+      <button class="tab" data-tab="display">Display</button>
+      <button class="tab" data-tab="scan-log">Scan Log</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+
+    <main>
+      <!-- Add Code Tab -->
+      <section id="add-code" class="tab-content active">
+        <div class="card">
+          <h2>Add New Code</h2>
+          <div class="add-mode-toggle">
+            <button class="btn btn-small btn-secondary active" id="mode-single" onclick="setAddMode('single')">Single</button>
+            <button class="btn btn-small btn-secondary" id="mode-bulk" onclick="setAddMode('bulk')">Bulk</button>
+          </div>
+          <form id="add-code-form">
+            <div class="form-group" id="single-input-group">
+              <label for="code-input">Redemption Code</label>
+              <input type="text" id="code-input" placeholder="e.g. UGHLJVME7H29N">
+            </div>
+            <div class="form-group hidden" id="bulk-input-group">
+              <label for="code-bulk">Redemption Codes (comma separated)</label>
+              <textarea id="code-bulk" rows="4" placeholder="CODE1, CODE2, CODE3"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="code-label">Label (optional)</label>
+              <input type="text" id="code-label" placeholder="e.g. October 2026 Community Day">
+            </div>
+            <div class="form-group">
+              <label for="code-expiry">Expiry Date (optional)</label>
+              <input type="date" id="code-expiry">
+            </div>
+            <button type="submit" class="btn btn-primary">Add Code & Generate QR</button>
+          </form>
+        </div>
+
+        <div id="qr-preview" class="card hidden">
+          <h2>Generated QR Code</h2>
+          <div class="qr-display">
+            <div id="qr-container"></div>
+            <p id="qr-code-text" class="code-text"></p>
+            <p id="qr-label-text" class="label-text"></p>
+          </div>
+          <div class="qr-actions">
+            <button id="download-qr" class="btn btn-secondary">Download QR Image</button>
+            <button id="copy-link" class="btn btn-secondary">Copy Redeem Link</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Active Codes Tab -->
+      <section id="active-codes" class="tab-content">
+        <div class="card">
+          <h2>Active Codes</h2>
+          <div id="codes-list" class="codes-list">
+            <p class="empty-state">No codes added yet.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Display Tab -->
+      <section id="display" class="tab-content">
+        <div id="display-empty" class="card">
+          <p class="empty-state">No codes to display. Add codes first.</p>
+        </div>
+        <div id="display-viewer" class="display-viewer hidden">
+          <div class="display-counter">
+            <span id="display-pos">1</span> / <span id="display-total">1</span>
+          </div>
+          <div class="display-swipe-area" id="display-swipe">
+            <div class="display-qr-wrapper">
+              <div id="display-qr"></div>
+              <div class="display-code" id="display-code-text"></div>
+              <div class="display-label" id="display-label-text"></div>
+            </div>
+          </div>
+          <div class="display-nav">
+            <button class="btn btn-secondary display-nav-btn" id="display-prev">Prev</button>
+            <button class="btn btn-secondary display-nav-btn" id="display-next">Next</button>
+          </div>
+          <p class="display-hint">Swipe or use arrow keys to navigate</p>
+        </div>
+      </section>
+
+      <!-- Scan Log Tab -->
+      <section id="scan-log" class="tab-content">
+        <div class="card">
+          <h2>Scan Log</h2>
+          <div class="log-controls">
+            <button id="refresh-log" class="btn btn-secondary">Refresh Log</button>
+            <select id="log-filter">
+              <option value="all">All Codes</option>
+            </select>
+          </div>
+          <div id="log-table-container">
+            <p class="empty-state">No scans recorded yet.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings Tab -->
+      <section id="settings" class="tab-content">
+        <div class="card">
+          <h2>Settings</h2>
+          <form id="settings-form">
+            <div class="form-group">
+              <label for="script-url">Google Apps Script Web App URL</label>
+              <input type="url" id="script-url" placeholder="https://script.google.com/macros/s/.../exec">
+              <small>Deploy your Apps Script as a web app and paste the URL here.</small>
+            </div>
+            <div class="form-group">
+              <label for="site-base-url">Site Base URL</label>
+              <input type="url" id="site-base-url" placeholder="https://yourusername.github.io/pogo-code-dist">
+              <small>Your GitHub Pages URL. Used to generate QR code links.</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Settings</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Google Apps Script Setup</h2>
+          <ol class="setup-steps">
+            <li>Create a new Google Sheet</li>
+            <li>Go to <strong>Extensions &gt; Apps Script</strong></li>
+            <li>Replace the code with the script from <code>google-apps-script.js</code></li>
+            <li>Click <strong>Deploy &gt; New deployment</strong></li>
+            <li>Select <strong>Web app</strong>, set access to <strong>"Anyone"</strong></li>
+            <li>Copy the deployment URL and paste it above</li>
+          </ol>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
