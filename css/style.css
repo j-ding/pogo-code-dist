@@ -655,7 +655,8 @@ header h1 {
   flex: 1;
 }
 
-#step-cooldown {
+#step-cooldown,
+#step-already-redeemed {
   border-left: 4px solid var(--warning);
 }
 

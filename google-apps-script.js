@@ -30,6 +30,10 @@ function doGet(e) {
     return checkCooldown(e.parameter.trainerName || '');
   }
 
+  if (action === 'checkRedemption') {
+    return checkRedemption(e.parameter.code || '', e.parameter.trainerName || '');
+  }
+
   return ContentService
     .createTextOutput(JSON.stringify({ error: 'Unknown action' }))
     .setMimeType(ContentService.MimeType.JSON);
@@ -295,6 +299,31 @@ function logError(data) {
 
   return ContentService
     .createTextOutput(JSON.stringify({ success: true }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function checkRedemption(code, trainerName) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('ScanLog');
+
+  if (!sheet || !code || !trainerName) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ redeemed: false }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][1]) === String(code) &&
+        String(data[i][2]).toLowerCase().trim() === trainerName.toLowerCase().trim()) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ redeemed: true, timestamp: data[i][0] }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({ redeemed: false }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

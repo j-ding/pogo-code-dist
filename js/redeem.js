@@ -74,6 +74,22 @@ function formatTimeRemaining(ms) {
   return parts.join(' ');
 }
 
+async function checkRedemption(code, trainerName, scriptUrl) {
+  if (!scriptUrl) return null;
+
+  try {
+    const url = `${scriptUrl}?action=checkRedemption&code=${encodeURIComponent(code)}&trainerName=${encodeURIComponent(trainerName)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 async function checkCooldown(trainerName, scriptUrl) {
   if (!scriptUrl) return null;
 
@@ -91,6 +107,7 @@ async function checkCooldown(trainerName, scriptUrl) {
 }
 
 function proceedWithRedeem(code, trainerName, redeemUrl) {
+  document.getElementById('step-already-redeemed').classList.add('hidden');
   document.getElementById('step-cooldown').classList.add('hidden');
   document.getElementById('step-trainer').classList.add('hidden');
   document.getElementById('step-redirect').classList.remove('hidden');
@@ -144,8 +161,24 @@ function init() {
     if (!trainerName) return;
 
     const scriptUrl = getScriptUrl();
-    const cooldown = await checkCooldown(trainerName, scriptUrl);
 
+    const redemption = await checkRedemption(code, trainerName, scriptUrl);
+    if (redemption && redemption.redeemed) {
+      document.getElementById('step-trainer').classList.add('hidden');
+      document.getElementById('redeemed-trainer').textContent = trainerName;
+      document.getElementById('step-already-redeemed').classList.remove('hidden');
+
+      document.getElementById('redeemed-proceed').onclick = () => {
+        proceedWithRedeem(code, trainerName, redeemUrl);
+      };
+      document.getElementById('redeemed-cancel').onclick = () => {
+        document.getElementById('step-already-redeemed').classList.add('hidden');
+        document.getElementById('step-trainer').classList.remove('hidden');
+      };
+      return;
+    }
+
+    const cooldown = await checkCooldown(trainerName, scriptUrl);
     if (cooldown && cooldown.count >= 2) {
       const oldest = new Date(cooldown.recentCodes[0].timestamp);
       const cooldownEnd = new Date(oldest.getTime() + 7 * 24 * 60 * 60 * 1000);
