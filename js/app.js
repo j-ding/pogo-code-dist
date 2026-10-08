@@ -170,7 +170,7 @@ function generateQRPreview(code, label) {
   container.innerHTML = '';
 
   new QRCode(container, {
-    text: getDirectRedeemUrl(code),
+    text: getRedeemUrl(code),
     width: 200,
     height: 200,
     colorDark: '#1a1a2e',
@@ -211,7 +211,7 @@ function generateBulkQRPreview(entries) {
     qrDiv.className = 'code-item-qr';
 
     new QRCode(qrDiv, {
-      text: getDirectRedeemUrl(entry.code),
+      text: getRedeemUrl(entry.code),
       width: 100,
       height: 100,
       colorDark: '#1a1a2e',
@@ -308,7 +308,7 @@ function renderCodesList() {
     const el = document.getElementById(`qr-list-${entry.code}`);
     if (el) {
       new QRCode(el, {
-        text: getDirectRedeemUrl(entry.code),
+        text: getRedeemUrl(entry.code),
         width: 80,
         height: 80,
         colorDark: '#1a1a2e',
@@ -482,7 +482,7 @@ function renderDisplayQR() {
   const size = Math.min(window.innerWidth - 96, 280);
 
   new QRCode(container, {
-    text: getDirectRedeemUrl(entry.code),
+    text: getRedeemUrl(entry.code),
     width: size,
     height: size,
     colorDark: '#1a1a2e',

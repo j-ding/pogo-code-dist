@@ -11,10 +11,37 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
-  <div class="container">
+  <!-- Login Screen -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1>PoGo Code Dist</h1>
+      <p class="subtitle">Admin Login</p>
+      <form id="login-form">
+        <div class="form-group">
+          <label for="login-user">Username</label>
+          <input type="text" id="login-user" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="login-pass">Password</label>
+          <input type="password" id="login-pass" required autocomplete="current-password">
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="login-remember"> Remember me
+          </label>
+        </div>
+        <p id="login-error" class="login-error hidden">Invalid username or password.</p>
+        <button type="submit" class="btn btn-primary btn-large">Log In</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main App (hidden until login) -->
+  <div class="container hidden" id="app-container">
     <header>
       <h1>PoGo Code Dist</h1>
       <p class="subtitle">Pokemon Go Code Distribution</p>
+      <button id="logout-btn" class="btn btn-small btn-secondary logout-btn" onclick="clearSession(); showLogin();">Log Out</button>
     </header>
 
     <section id="setup-banner" class="banner hidden">
@@ -157,6 +184,7 @@
     </main>
   </div>
 
+  <script src="js/auth.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
