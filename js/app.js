@@ -451,6 +451,59 @@ function updateLogFilter() {
 document.getElementById('refresh-log').addEventListener('click', loadScanLog);
 document.getElementById('log-filter').addEventListener('change', loadScanLog);
 
+// Error log
+async function loadErrorLog() {
+  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
+  if (!scriptUrl) {
+    document.getElementById('error-log-container').innerHTML =
+      '<p class="empty-state">Configure your Google Apps Script URL to view error logs.</p>';
+    return;
+  }
+
+  document.getElementById('error-log-container').innerHTML =
+    '<p class="empty-state">Loading errors...</p>';
+
+  try {
+    const response = await fetch(`${scriptUrl}?action=getErrors`);
+    const data = await response.json();
+
+    if (!data.errors || data.errors.length === 0) {
+      document.getElementById('error-log-container').innerHTML =
+        '<p class="empty-state">No errors recorded.</p>';
+      return;
+    }
+
+    const html = `
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Page</th>
+            <th>Error</th>
+            <th>Browser</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.errors.map(err => `
+            <tr>
+              <td>${new Date(err.timestamp).toLocaleString()}</td>
+              <td>${err.page || ''}</td>
+              <td title="${(err.stack || '').replace(/"/g, '&quot;')}">${err.error || ''}</td>
+              <td>${err.userAgent ? err.userAgent.slice(0, 40) + '...' : ''}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    document.getElementById('error-log-container').innerHTML = html;
+  } catch {
+    document.getElementById('error-log-container').innerHTML =
+      '<p class="empty-state">Error loading error logs.</p>';
+  }
+}
+
+document.getElementById('refresh-errors').addEventListener('click', loadErrorLog);
+
 // Display viewer
 let displayIndex = 0;
 

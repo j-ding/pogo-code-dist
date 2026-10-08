@@ -170,6 +170,16 @@
         </div>
 
         <div class="card">
+          <h2>Error Log</h2>
+          <div class="log-controls">
+            <button id="refresh-errors" class="btn btn-secondary">Refresh Errors</button>
+          </div>
+          <div id="error-log-container">
+            <p class="empty-state">No errors recorded.</p>
+          </div>
+        </div>
+
+        <div class="card">
           <h2>Google Apps Script Setup</h2>
           <ol class="setup-steps">
             <li>Create a new Google Sheet</li>
@@ -182,8 +192,12 @@
         </div>
       </section>
     </main>
+    <footer class="app-footer">
+      <span>v1.0.0</span>
+    </footer>
   </div>
 
+  <script src="js/error-logger.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/app.js"></script>
 </body>

@@ -22,6 +22,10 @@ function doGet(e) {
     return getCodesFromSheet();
   }
 
+  if (action === 'getErrors') {
+    return getErrors();
+  }
+
   return ContentService
     .createTextOutput(JSON.stringify({ error: 'Unknown action' }))
     .setMimeType(ContentService.MimeType.JSON);
@@ -43,6 +47,10 @@ function doPost(e) {
 
   if (data.action === 'addCode') {
     return addCode(data);
+  }
+
+  if (data.action === 'logError') {
+    return logError(data);
   }
 
   return ContentService
@@ -177,5 +185,57 @@ function getCodesFromSheet() {
 
   return ContentService
     .createTextOutput(JSON.stringify({ codes: codes }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function logError(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('ErrorLog');
+
+  if (!sheet) {
+    sheet = ss.insertSheet('ErrorLog');
+    sheet.appendRow(['Timestamp', 'Page', 'Error', 'Stack', 'User Agent', 'URL']);
+  }
+
+  sheet.appendRow([
+    data.timestamp || new Date().toISOString(),
+    data.page || '',
+    data.error || '',
+    data.stack || '',
+    data.userAgent || '',
+    data.url || ''
+  ]);
+
+  return ContentService
+    .createTextOutput(JSON.stringify({ success: true }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function getErrors() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('ErrorLog');
+
+  if (!sheet) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ errors: [] }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var data = sheet.getDataRange().getValues();
+  var errors = [];
+
+  for (var i = data.length - 1; i >= 1; i--) {
+    errors.push({
+      timestamp: data[i][0],
+      page: data[i][1],
+      error: data[i][2],
+      stack: data[i][3],
+      userAgent: data[i][4],
+      url: data[i][5]
+    });
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({ errors: errors }))
     .setMimeType(ContentService.MimeType.JSON);
 }

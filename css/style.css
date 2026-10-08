@@ -676,6 +676,14 @@ header h1 {
   font-size: 0.8rem;
 }
 
+/* Footer */
+.app-footer {
+  text-align: center;
+  padding: 24px 0 16px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
 /* Toast notification */
 .toast {
   position: fixed;
