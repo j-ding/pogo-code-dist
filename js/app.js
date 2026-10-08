@@ -386,6 +386,7 @@ function deactivateCode(code) {
     entry.active = false;
     saveCodes(codes);
     renderCodesList();
+    syncUpdateToSheet(code, false);
     showToast('Code moved to non-active');
   }
 }
@@ -397,6 +398,7 @@ function reactivateCode(code) {
     entry.active = true;
     saveCodes(codes);
     renderCodesList();
+    syncUpdateToSheet(code, true);
     showToast('Code reactivated');
   }
 }
@@ -406,7 +408,33 @@ function removeCode(code) {
   const codes = getCodes().filter(c => c.code !== code);
   saveCodes(codes);
   renderCodesList();
+  syncRemoveFromSheet(code);
   showToast('Code removed');
+}
+
+// Sync codes from Google Sheet on load
+async function syncCodesFromSheet() {
+  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
+  if (!scriptUrl) return;
+
+  try {
+    const response = await fetch(`${scriptUrl}?action=getCodes`);
+    const data = await response.json();
+    if (!data.codes || data.codes.length === 0) {
+      saveCodes([]);
+      return;
+    }
+
+    const codes = data.codes.map(c => ({
+      code: String(c.code),
+      label: c.label || '',
+      expiry: c.expiry || null,
+      addedAt: c.addedAt || '',
+      active: c.active !== false,
+    }));
+
+    saveCodes(codes);
+  } catch {}
 }
 
 // Sync code to Google Sheet
@@ -426,6 +454,34 @@ async function syncCodeToSheet(entry) {
         expiry: entry.expiry || '',
         addedAt: entry.addedAt,
       }),
+    });
+  } catch {}
+}
+
+async function syncUpdateToSheet(code, active) {
+  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
+  if (!scriptUrl) return;
+
+  try {
+    await fetch(scriptUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'updateCode', code, active }),
+    });
+  } catch {}
+}
+
+async function syncRemoveFromSheet(code) {
+  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
+  if (!scriptUrl) return;
+
+  try {
+    await fetch(scriptUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'removeCode', code }),
     });
   } catch {}
 }

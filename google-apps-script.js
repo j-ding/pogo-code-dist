@@ -53,6 +53,14 @@ function doPost(e) {
     return addCode(data);
   }
 
+  if (data.action === 'updateCode') {
+    return updateCode(data);
+  }
+
+  if (data.action === 'removeCode') {
+    return removeCodeFromSheet(data);
+  }
+
   if (data.action === 'logError') {
     return logError(data);
   }
@@ -114,18 +122,74 @@ function addCode(data) {
 
   if (!sheet) {
     sheet = ss.insertSheet('Codes');
-    sheet.appendRow(['Code', 'Label', 'Expiry', 'Added At']);
+    sheet.appendRow(['Code', 'Label', 'Expiry', 'Added At', 'Active']);
+  }
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (headers.indexOf('Active') === -1) {
+    sheet.getRange(1, 5).setValue('Active');
   }
 
   sheet.appendRow([
     data.code || '',
     data.label || '',
     data.expiry || '',
-    data.addedAt || new Date().toISOString()
+    data.addedAt || new Date().toISOString(),
+    'Yes'
   ]);
 
   return ContentService
     .createTextOutput(JSON.stringify({ success: true }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function updateCode(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Codes');
+  if (!sheet || !data.code) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'No sheet or code' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(data.code)) {
+      if (typeof data.active !== 'undefined') {
+        sheet.getRange(i + 1, 5).setValue(data.active ? 'Yes' : 'No');
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify({ success: true }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({ success: false, error: 'Code not found' }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function removeCodeFromSheet(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Codes');
+  if (!sheet || !data.code) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: 'No sheet or code' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(data.code)) {
+      sheet.deleteRow(i + 1);
+      return ContentService
+        .createTextOutput(JSON.stringify({ success: true }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+
+  return ContentService
+    .createTextOutput(JSON.stringify({ success: false, error: 'Code not found' }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -183,7 +247,8 @@ function getCodesFromSheet() {
       code: data[i][0],
       label: data[i][1],
       expiry: data[i][2],
-      addedAt: data[i][3]
+      addedAt: data[i][3],
+      active: data[i][4] !== 'No'
     });
   }
 

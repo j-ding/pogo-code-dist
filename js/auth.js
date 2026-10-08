@@ -41,6 +41,11 @@ function clearSession() {
 function showApp() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app-container').classList.remove('hidden');
+  if (typeof syncCodesFromSheet === 'function') {
+    syncCodesFromSheet().then(() => {
+      if (typeof renderCodesList === 'function') renderCodesList();
+    });
+  }
 }
 
 function showLogin() {
