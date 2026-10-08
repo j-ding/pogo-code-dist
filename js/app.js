@@ -420,12 +420,10 @@ async function syncCodesFromSheet() {
   try {
     const response = await fetch(`${scriptUrl}?action=getCodes`);
     const data = await response.json();
-    if (!data.codes || data.codes.length === 0) {
-      saveCodes([]);
-      return;
-    }
 
-    const codes = data.codes.map(c => ({
+    if (!data.codes) return;
+
+    const sheetCodes = data.codes.map(c => ({
       code: String(c.code),
       label: c.label || '',
       expiry: c.expiry || null,
@@ -433,57 +431,58 @@ async function syncCodesFromSheet() {
       active: c.active !== false,
     }));
 
-    saveCodes(codes);
+    const localCodes = getCodes();
+    const sheetSet = new Set(sheetCodes.map(c => c.code));
+
+    const localOnly = localCodes.filter(c => !sheetSet.has(c.code));
+    localOnly.forEach(entry => syncCodeToSheet(entry));
+
+    const merged = [...sheetCodes, ...localOnly];
+    saveCodes(merged);
   } catch {}
+}
+
+function postToSheet(scriptUrl, payload) {
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon(scriptUrl, JSON.stringify(payload));
+  } else {
+    try {
+      fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload),
+      });
+    } catch {}
+  }
 }
 
 // Sync code to Google Sheet
-async function syncCodeToSheet(entry) {
+function syncCodeToSheet(entry) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
   if (!scriptUrl) return;
 
-  try {
-    await fetch(scriptUrl, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({
-        action: 'addCode',
-        code: entry.code,
-        label: entry.label || '',
-        expiry: entry.expiry || '',
-        addedAt: entry.addedAt,
-      }),
-    });
-  } catch {}
+  postToSheet(scriptUrl, {
+    action: 'addCode',
+    code: entry.code,
+    label: entry.label || '',
+    expiry: entry.expiry || '',
+    addedAt: entry.addedAt,
+  });
 }
 
-async function syncUpdateToSheet(code, active) {
+function syncUpdateToSheet(code, active) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
   if (!scriptUrl) return;
 
-  try {
-    await fetch(scriptUrl, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'updateCode', code, active }),
-    });
-  } catch {}
+  postToSheet(scriptUrl, { action: 'updateCode', code, active });
 }
 
-async function syncRemoveFromSheet(code) {
+function syncRemoveFromSheet(code) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
   if (!scriptUrl) return;
 
-  try {
-    await fetch(scriptUrl, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'removeCode', code }),
-    });
-  } catch {}
+  postToSheet(scriptUrl, { action: 'removeCode', code });
 }
 
 // Scan log
