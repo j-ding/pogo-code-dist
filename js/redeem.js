@@ -4,6 +4,20 @@ function getParam(name) {
   return new URLSearchParams(window.location.search).get(name);
 }
 
+function getDeviceId() {
+  try {
+    let id = localStorage.getItem('pogo_device_id');
+    if (!id) {
+      id = 'dev-' + crypto.randomUUID();
+      localStorage.setItem('pogo_device_id', id);
+    }
+    return id;
+  } catch {
+    return 'dev-unknown';
+  }
+}
+
+
 function getScriptUrl() {
   if (typeof SITE_CONFIG !== 'undefined' && SITE_CONFIG.scriptUrl) {
     return SITE_CONFIG.scriptUrl;
@@ -130,6 +144,7 @@ function proceedWithRedeem(code, trainerName, redeemUrl) {
       language: language,
       screenResolution: screenRes,
       referrer: document.referrer || 'direct',
+      deviceId: getDeviceId(),
     };
 
     const scriptUrl = getScriptUrl();

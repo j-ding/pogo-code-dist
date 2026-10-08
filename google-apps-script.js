@@ -34,6 +34,7 @@ function doGet(e) {
     return checkRedemption(e.parameter.code || '', e.parameter.trainerName || '');
   }
 
+
   return ContentService
     .createTextOutput(JSON.stringify({ error: 'Unknown action' }))
     .setMimeType(ContentService.MimeType.JSON);
@@ -82,8 +83,13 @@ function logScan(data) {
     sheet = ss.insertSheet('ScanLog');
     sheet.appendRow([
       'Timestamp', 'Code', 'Trainer Name', 'Device', 'OS', 'Browser',
-      'City', 'Country', 'Language', 'Screen Resolution', 'Referrer', 'Repeat'
+      'City', 'Country', 'Language', 'Screen Resolution', 'Referrer', 'Repeat', 'Device ID'
     ]);
+  }
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (headers.indexOf('Device ID') === -1) {
+    sheet.getRange(1, headers.length + 1).setValue('Device ID');
   }
 
   var isRepeat = checkRepeat(sheet, data.code, data.trainerName);
@@ -100,7 +106,8 @@ function logScan(data) {
     data.language || '',
     data.screenResolution || '',
     data.referrer || '',
-    isRepeat ? 'Yes' : 'No'
+    isRepeat ? 'Yes' : 'No',
+    data.deviceId || ''
   ]);
 
   if (data.code) {
@@ -242,7 +249,8 @@ function getLogs() {
       language: data[i][8],
       screenResolution: data[i][9],
       referrer: data[i][10],
-      repeat: data[i][11] === 'Yes'
+      repeat: data[i][11] === 'Yes',
+      deviceId: data[i][12] || ''
     });
   }
 
