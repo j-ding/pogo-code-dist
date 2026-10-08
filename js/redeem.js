@@ -61,34 +61,45 @@ function getLocationWithTimeout(ms) {
     .catch(() => ({ city: '', country: '' }));
 }
 
-function init() {
-  const code = getParam('code');
+function formatTimeRemaining(ms) {
+  const totalMinutes = Math.ceil(ms / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
 
-  if (!code) {
-    document.getElementById('step-trainer').classList.add('hidden');
-    document.getElementById('step-error').classList.remove('hidden');
-    return;
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+  return parts.join(' ');
+}
+
+async function checkCooldown(trainerName, scriptUrl) {
+  if (!scriptUrl) return null;
+
+  try {
+    const url = `${scriptUrl}?action=checkCooldown&trainerName=${encodeURIComponent(trainerName)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
   }
+}
 
-  const redeemUrl = POGO_REDEEM_BASE + encodeURIComponent(code);
-  document.getElementById('display-code').textContent = code;
-  document.getElementById('manual-link').href = redeemUrl;
+function proceedWithRedeem(code, trainerName, redeemUrl) {
+  document.getElementById('step-cooldown').classList.add('hidden');
+  document.getElementById('step-trainer').classList.add('hidden');
+  document.getElementById('step-redirect').classList.remove('hidden');
 
-  document.getElementById('trainer-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
+  const { device, os, browser } = parseUserAgent();
+  const language = navigator.language || navigator.userLanguage || '';
+  const screenRes = `${screen.width}x${screen.height}`;
 
-    const trainerName = document.getElementById('trainer-name').value.trim();
-    if (!trainerName) return;
-
-    document.getElementById('step-trainer').classList.add('hidden');
-    document.getElementById('step-redirect').classList.remove('hidden');
-
-    const { device, os, browser } = parseUserAgent();
-    const language = navigator.language || navigator.userLanguage || '';
-    const screenRes = `${screen.width}x${screen.height}`;
-
-    const location = await getLocationWithTimeout(2000);
-
+  getLocationWithTimeout(2000).then(location => {
     const logData = {
       action: 'logScan',
       timestamp: new Date().toISOString(),
@@ -110,6 +121,54 @@ function init() {
     }
 
     window.location.href = redeemUrl;
+  });
+}
+
+function init() {
+  const code = getParam('code');
+
+  if (!code) {
+    document.getElementById('step-trainer').classList.add('hidden');
+    document.getElementById('step-error').classList.remove('hidden');
+    return;
+  }
+
+  const redeemUrl = POGO_REDEEM_BASE + encodeURIComponent(code);
+  document.getElementById('display-code').textContent = code;
+  document.getElementById('manual-link').href = redeemUrl;
+
+  document.getElementById('trainer-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const trainerName = document.getElementById('trainer-name').value.trim();
+    if (!trainerName) return;
+
+    const scriptUrl = getScriptUrl();
+    const cooldown = await checkCooldown(trainerName, scriptUrl);
+
+    if (cooldown && cooldown.count >= 2) {
+      const oldest = new Date(cooldown.recentCodes[0].timestamp);
+      const cooldownEnd = new Date(oldest.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const remaining = cooldownEnd.getTime() - Date.now();
+
+      if (remaining > 0) {
+        document.getElementById('step-trainer').classList.add('hidden');
+        document.getElementById('cooldown-count').textContent = cooldown.count;
+        document.getElementById('cooldown-timer').textContent = formatTimeRemaining(remaining);
+        document.getElementById('step-cooldown').classList.remove('hidden');
+
+        document.getElementById('cooldown-proceed').onclick = () => {
+          proceedWithRedeem(code, trainerName, redeemUrl);
+        };
+        document.getElementById('cooldown-cancel').onclick = () => {
+          document.getElementById('step-cooldown').classList.add('hidden');
+          document.getElementById('step-trainer').classList.remove('hidden');
+        };
+        return;
+      }
+    }
+
+    proceedWithRedeem(code, trainerName, redeemUrl);
   });
 }
 

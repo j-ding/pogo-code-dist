@@ -12,6 +12,14 @@ function getCodes() {
   }
 }
 
+function getActiveCodes() {
+  return getCodes().filter(c => c.active !== false);
+}
+
+function getInactiveCodes() {
+  return getCodes().filter(c => c.active === false);
+}
+
 function saveCodes(codes) {
   try {
     localStorage.setItem(STORAGE_KEYS.CODES, JSON.stringify(codes));
@@ -269,45 +277,76 @@ function downloadAllQRs(entries) {
 
 // Render codes list
 function renderCodesList() {
-  const list = document.getElementById('codes-list');
-  const codes = getCodes();
-
-  if (codes.length === 0) {
-    list.innerHTML = '<p class="empty-state">No codes added yet.</p>';
-    return;
-  }
+  const activeCodes = getActiveCodes();
+  const inactiveCodes = getInactiveCodes();
+  const activeList = document.getElementById('codes-list');
+  const inactiveList = document.getElementById('inactive-codes-list');
+  const inactiveCard = document.getElementById('inactive-codes-card');
 
   const now = new Date();
-  list.innerHTML = codes.map(entry => {
-    const isExpired = entry.expiry && new Date(entry.expiry) < now;
-    const badge = isExpired
-      ? '<span class="badge badge-expired">Expired</span>'
-      : '<span class="badge badge-active">Active</span>';
 
-    const meta = [
-      entry.label,
-      entry.expiry ? `Expires: ${entry.expiry}` : null,
-      `Added: ${new Date(entry.addedAt).toLocaleDateString()}`,
-    ].filter(Boolean).join(' · ');
+  if (activeCodes.length === 0) {
+    activeList.innerHTML = '<p class="empty-state">No active codes.</p>';
+  } else {
+    activeList.innerHTML = activeCodes.map(entry => {
+      const isExpired = entry.expiry && new Date(entry.expiry) < now;
+      const badge = isExpired
+        ? '<span class="badge badge-expired">Expired</span>'
+        : '<span class="badge badge-active">Active</span>';
 
-    return `
-      <div class="code-item" data-code="${entry.code}">
-        <div class="code-item-qr" id="qr-list-${entry.code}"></div>
-        <div class="code-item-info">
-          <div class="code-value">${entry.code}</div>
-          <div class="code-meta">${meta}</div>
-          <div>${badge}</div>
+      const meta = [
+        entry.label,
+        entry.expiry ? `Expires: ${entry.expiry}` : null,
+        `Added: ${new Date(entry.addedAt).toLocaleDateString()}`,
+      ].filter(Boolean).join(' · ');
+
+      return `
+        <div class="code-item" data-code="${entry.code}">
+          <div class="code-item-qr" id="qr-list-${entry.code}"></div>
+          <div class="code-item-info">
+            <div class="code-value">${entry.code}</div>
+            <div class="code-meta">${meta}</div>
+            <div>${badge}</div>
+          </div>
+          <div class="code-item-actions">
+            <button class="btn btn-small btn-secondary" onclick="copyCodeLink('${entry.code}')">Copy Link</button>
+            <button class="btn btn-small btn-secondary" onclick="downloadCodeQR('${entry.code}')">Download QR</button>
+            <button class="btn btn-small btn-warning" onclick="deactivateCode('${entry.code}')">Deactivate</button>
+            <button class="btn btn-small btn-danger" onclick="removeCode('${entry.code}')">Remove</button>
+          </div>
         </div>
-        <div class="code-item-actions">
-          <button class="btn btn-small btn-secondary" onclick="copyCodeLink('${entry.code}')">Copy Link</button>
-          <button class="btn btn-small btn-secondary" onclick="downloadCodeQR('${entry.code}')">Download QR</button>
-          <button class="btn btn-small btn-danger" onclick="removeCode('${entry.code}')">Remove</button>
-        </div>
-      </div>
-    `;
-  }).join('');
+      `;
+    }).join('');
+  }
 
-  codes.forEach(entry => {
+  if (inactiveCodes.length === 0) {
+    inactiveCard.classList.add('hidden');
+  } else {
+    inactiveCard.classList.remove('hidden');
+    inactiveList.innerHTML = inactiveCodes.map(entry => {
+      const meta = [
+        entry.label,
+        entry.expiry ? `Expired: ${entry.expiry}` : null,
+        `Added: ${new Date(entry.addedAt).toLocaleDateString()}`,
+      ].filter(Boolean).join(' · ');
+
+      return `
+        <div class="code-item code-item-inactive" data-code="${entry.code}">
+          <div class="code-item-info">
+            <div class="code-value">${entry.code}</div>
+            <div class="code-meta">${meta}</div>
+            <div><span class="badge badge-inactive">Inactive</span></div>
+          </div>
+          <div class="code-item-actions">
+            <button class="btn btn-small btn-secondary" onclick="reactivateCode('${entry.code}')">Reactivate</button>
+            <button class="btn btn-small btn-danger" onclick="removeCode('${entry.code}')">Remove</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  activeCodes.forEach(entry => {
     const el = document.getElementById(`qr-list-${entry.code}`);
     if (el) {
       new QRCode(el, {
@@ -338,6 +377,28 @@ function downloadCodeQR(idOrCode) {
   link.download = `pogo-qr-${code}.png`;
   link.href = canvas.toDataURL('image/png');
   link.click();
+}
+
+function deactivateCode(code) {
+  const codes = getCodes();
+  const entry = codes.find(c => c.code === code);
+  if (entry) {
+    entry.active = false;
+    saveCodes(codes);
+    renderCodesList();
+    showToast('Code moved to non-active');
+  }
+}
+
+function reactivateCode(code) {
+  const codes = getCodes();
+  const entry = codes.find(c => c.code === code);
+  if (entry) {
+    entry.active = true;
+    saveCodes(codes);
+    renderCodesList();
+    showToast('Code reactivated');
+  }
 }
 
 function removeCode(code) {
@@ -511,7 +572,7 @@ document.getElementById('refresh-errors').addEventListener('click', loadErrorLog
 let displayIndex = 0;
 
 function initDisplay() {
-  const codes = getCodes();
+  const codes = getActiveCodes();
   if (codes.length === 0) {
     document.getElementById('display-empty').classList.remove('hidden');
     document.getElementById('display-viewer').classList.add('hidden');
@@ -525,7 +586,7 @@ function initDisplay() {
 }
 
 function renderDisplayQR() {
-  const codes = getCodes();
+  const codes = getActiveCodes();
   if (codes.length === 0) return;
 
   if (displayIndex < 0) displayIndex = codes.length - 1;

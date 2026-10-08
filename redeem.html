@@ -32,6 +32,18 @@
       </div>
     </section>
 
+    <!-- Cooldown Warning -->
+    <section id="step-cooldown" class="card hidden">
+      <h2>Cooldown Active</h2>
+      <p>You've redeemed <strong id="cooldown-count">2</strong> code(s) in the past 7 days.</p>
+      <p>Pokemon Go limits redemptions to <strong>2 codes per week</strong>. Your cooldown resets in <strong id="cooldown-timer"></strong>.</p>
+      <p class="cooldown-note">You can still try to redeem, but it may not work until the cooldown expires.</p>
+      <div class="cooldown-actions">
+        <button id="cooldown-proceed" class="btn btn-primary">Redeem Anyway</button>
+        <button id="cooldown-cancel" class="btn btn-secondary">Cancel</button>
+      </div>
+    </section>
+
     <!-- Step 2: Redirecting -->
     <section id="step-redirect" class="card hidden">
       <h2>Redirecting...</h2>

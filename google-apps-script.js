@@ -26,6 +26,10 @@ function doGet(e) {
     return getErrors();
   }
 
+  if (action === 'checkCooldown') {
+    return checkCooldown(e.parameter.trainerName || '');
+  }
+
   return ContentService
     .createTextOutput(JSON.stringify({ error: 'Unknown action' }))
     .setMimeType(ContentService.MimeType.JSON);
@@ -208,6 +212,43 @@ function logError(data) {
 
   return ContentService
     .createTextOutput(JSON.stringify({ success: true }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function checkCooldown(trainerName) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('ScanLog');
+
+  if (!sheet || !trainerName) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ recentCodes: [], count: 0 }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var data = sheet.getDataRange().getValues();
+  var now = new Date();
+  var weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  var seen = {};
+  var recentCodes = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var rowTrainer = String(data[i][2]).toLowerCase().trim();
+    if (rowTrainer !== trainerName.toLowerCase().trim()) continue;
+
+    var rowTimestamp = new Date(data[i][0]);
+    if (rowTimestamp < weekAgo) continue;
+
+    var rowCode = String(data[i][1]);
+    if (seen[rowCode]) continue;
+    seen[rowCode] = true;
+
+    recentCodes.push({ code: rowCode, timestamp: rowTimestamp.toISOString() });
+  }
+
+  recentCodes.sort(function(a, b) { return new Date(a.timestamp) - new Date(b.timestamp); });
+
+  return ContentService
+    .createTextOutput(JSON.stringify({ recentCodes: recentCodes, count: recentCodes.length }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

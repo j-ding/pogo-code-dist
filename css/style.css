@@ -310,6 +310,17 @@ header h1 {
   color: #ffffff;
 }
 
+.btn-warning {
+  color: var(--warning);
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.btn-warning:hover {
+  background: var(--warning);
+  color: #ffffff;
+}
+
 /* Add mode toggle */
 .add-mode-toggle {
   display: flex;
@@ -421,6 +432,10 @@ header h1 {
   margin-top: 2px;
 }
 
+.code-item-inactive {
+  opacity: 0.6;
+}
+
 .code-item-actions {
   display: flex;
   gap: 6px;
@@ -443,6 +458,11 @@ header h1 {
 .badge-expired {
   background: var(--warning-bg);
   color: var(--warning);
+}
+
+.badge-inactive {
+  background: var(--bg-input);
+  color: var(--text-muted);
 }
 
 .scan-count {
@@ -616,6 +636,31 @@ header h1 {
 .code-display strong {
   font-family: 'Courier New', monospace;
   letter-spacing: 0.05em;
+}
+
+/* Cooldown Warning */
+.cooldown-note {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+.cooldown-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.cooldown-actions .btn {
+  flex: 1;
+}
+
+#step-cooldown {
+  border-left: 4px solid var(--warning);
+}
+
+#cooldown-timer {
+  color: var(--warning);
 }
 
 /* Spinner */
