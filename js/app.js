@@ -444,9 +444,41 @@ async function syncCodesFromSheet() {
 
 async function syncAndRender() {
   showToast('Syncing...');
-  await syncCodesFromSheet();
-  renderCodesList();
-  showToast('Codes synced');
+  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
+  if (!scriptUrl) {
+    showToast('No script URL configured');
+    return;
+  }
+
+  try {
+    const response = await fetch(`${scriptUrl}?action=getCodes`);
+    const data = await response.json();
+
+    if (!data.codes) {
+      showToast('No codes returned from sheet');
+      return;
+    }
+
+    const sheetCodes = data.codes.map(c => ({
+      code: String(c.code),
+      label: c.label || '',
+      expiry: c.expiry || null,
+      addedAt: c.addedAt || '',
+      active: c.active !== false,
+    }));
+
+    const localCodes = getCodes();
+    const sheetSet = new Set(sheetCodes.map(c => c.code));
+    const localOnly = localCodes.filter(c => !sheetSet.has(c.code));
+    localOnly.forEach(entry => syncCodeToSheet(entry));
+
+    const merged = [...sheetCodes, ...localOnly];
+    saveCodes(merged);
+    renderCodesList();
+    showToast(`Synced: ${sheetCodes.length} from sheet, ${localOnly.length} local only`);
+  } catch (err) {
+    showToast('Sync failed: ' + err.message);
+  }
 }
 
 function postToSheet(scriptUrl, payload) {
