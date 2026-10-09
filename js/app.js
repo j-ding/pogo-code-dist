@@ -481,27 +481,19 @@ async function syncAndRender() {
   }
 }
 
-function postToSheet(scriptUrl, payload) {
-  if (navigator.sendBeacon) {
-    navigator.sendBeacon(scriptUrl, JSON.stringify(payload));
-  } else {
-    try {
-      fetch(scriptUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload),
-      });
-    } catch {}
-  }
-}
-
-// Sync code to Google Sheet
-function syncCodeToSheet(entry) {
+function writeToSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
   if (!scriptUrl) return;
 
-  postToSheet(scriptUrl, {
+  const query = Object.entries(params)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+
+  fetch(`${scriptUrl}?${query}`).catch(() => {});
+}
+
+function syncCodeToSheet(entry) {
+  writeToSheet({
     action: 'addCode',
     code: entry.code,
     label: entry.label || '',
@@ -511,17 +503,11 @@ function syncCodeToSheet(entry) {
 }
 
 function syncUpdateToSheet(code, active) {
-  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
-  if (!scriptUrl) return;
-
-  postToSheet(scriptUrl, { action: 'updateCode', code, active });
+  writeToSheet({ action: 'updateCode', code, active: active ? 'true' : 'false' });
 }
 
 function syncRemoveFromSheet(code) {
-  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
-  if (!scriptUrl) return;
-
-  postToSheet(scriptUrl, { action: 'removeCode', code });
+  writeToSheet({ action: 'removeCode', code });
 }
 
 // Scan log

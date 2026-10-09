@@ -34,6 +34,25 @@ function doGet(e) {
     return checkRedemption(e.parameter.code || '', e.parameter.trainerName || '');
   }
 
+  if (action === 'addCode') {
+    return addCode({
+      code: e.parameter.code || '',
+      label: e.parameter.label || '',
+      expiry: e.parameter.expiry || '',
+      addedAt: e.parameter.addedAt || new Date().toISOString()
+    });
+  }
+
+  if (action === 'updateCode') {
+    return updateCode({
+      code: e.parameter.code || '',
+      active: e.parameter.active === 'true'
+    });
+  }
+
+  if (action === 'removeCode') {
+    return removeCodeFromSheet({ code: e.parameter.code || '' });
+  }
 
   return ContentService
     .createTextOutput(JSON.stringify({ error: 'Unknown action' }))
@@ -151,12 +170,17 @@ function addCode(data) {
 
   if (!sheet) {
     sheet = ss.insertSheet('Codes');
-    sheet.appendRow(['Code', 'Label', 'Expiry', 'Added At', 'Active']);
   }
 
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  if (headers.indexOf('Active') === -1) {
-    sheet.getRange(1, 5).setValue('Active');
+  var expectedHeaders = ['Code', 'Label', 'Expiry', 'Added At', 'Active'];
+  var lastCol = sheet.getLastColumn();
+  if (lastCol === 0) {
+    sheet.appendRow(expectedHeaders);
+  } else {
+    var headers = sheet.getRange(1, 1, 1, Math.max(lastCol, 5)).getValues()[0];
+    if (headers[0] !== 'Code' || headers[4] !== 'Active') {
+      sheet.getRange(1, 1, 1, 5).setValues([expectedHeaders]);
+    }
   }
 
   sheet.appendRow([
