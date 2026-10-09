@@ -2,17 +2,39 @@
  * Google Apps Script — paste this into your Google Sheet's Apps Script editor.
  *
  * Setup:
- *  1. Create a Google Sheet with two tabs named "Codes" and "ScanLog"
- *  2. In "Codes" row 1, add headers: Code | Label | Expiry | Added At
- *  3. In "ScanLog" row 1, add headers:
- *     Timestamp | Code | Trainer Name | Device | OS | Browser | City | Country | Language | Screen Resolution | Referrer | Repeat
- *  4. Extensions > Apps Script, paste this code
- *  5. Deploy > New deployment > Web app > "Anyone" access
- *  6. Copy the URL into your PoGo Code Dist settings
+ *  1. Create a Google Sheet (tabs and headers are created automatically)
+ *  2. Extensions > Apps Script, paste this code
+ *  3. Deploy > New deployment > Web app > Execute as "Me", access "Anyone"
+ *  4. Copy the URL into js/site-config.js
+ *
+ * Updating: paste the new code, then Deploy > Manage deployments > edit > Version: New version > Deploy.
+ * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
+
+var SCRIPT_VERSION = 3;
+
+function jsonOut(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
 
 function doGet(e) {
   var action = e.parameter.action;
+
+  if (action === 'ping') {
+    return jsonOut({ version: SCRIPT_VERSION });
+  }
+
+  if (action === 'addCodes') {
+    var list;
+    try {
+      list = JSON.parse(e.parameter.codes || '[]');
+    } catch (err) {
+      return jsonOut({ error: 'Invalid codes JSON' });
+    }
+    return jsonOut(addCodes(list));
+  }
 
   if (action === 'getLogs') {
     return getLogs();
@@ -164,36 +186,59 @@ function checkRepeat(sheet, code, trainerName) {
   return false;
 }
 
-function addCode(data) {
+function getCodesSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('Codes');
-
-  if (!sheet) {
-    sheet = ss.insertSheet('Codes');
-  }
+  var sheet = ss.getSheetByName('Codes') || ss.insertSheet('Codes');
 
   var expectedHeaders = ['Code', 'Label', 'Expiry', 'Added At', 'Active'];
-  var lastCol = sheet.getLastColumn();
-  if (lastCol === 0) {
+  if (sheet.getLastColumn() === 0) {
     sheet.appendRow(expectedHeaders);
   } else {
-    var headers = sheet.getRange(1, 1, 1, Math.max(lastCol, 5)).getValues()[0];
+    var headers = sheet.getRange(1, 1, 1, 5).getValues()[0];
     if (headers[0] !== 'Code' || headers[4] !== 'Active') {
       sheet.getRange(1, 1, 1, 5).setValues([expectedHeaders]);
     }
   }
+  return sheet;
+}
 
-  sheet.appendRow([
-    data.code || '',
-    data.label || '',
-    data.expiry || '',
-    data.addedAt || new Date().toISOString(),
-    'Yes'
-  ]);
+function addCodes(list) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getCodesSheet();
+    var existing = {};
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      existing[String(rows[i][0]).trim().toUpperCase()] = true;
+    }
 
-  return ContentService
-    .createTextOutput(JSON.stringify({ success: true }))
-    .setMimeType(ContentService.MimeType.JSON);
+    var newRows = [];
+    for (var j = 0; j < list.length; j++) {
+      var c = list[j];
+      var code = String(c.code || '').trim().toUpperCase();
+      if (!code || existing[code]) continue;
+      existing[code] = true;
+      newRows.push([
+        code,
+        c.label || '',
+        c.expiry || '',
+        c.addedAt || new Date().toISOString(),
+        c.active === false ? 'No' : 'Yes'
+      ]);
+    }
+
+    if (newRows.length) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 5).setValues(newRows);
+    }
+    return { success: true, added: newRows.length, skipped: list.length - newRows.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function addCode(data) {
+  return jsonOut(addCodes([data]));
 }
 
 function updateCode(data) {

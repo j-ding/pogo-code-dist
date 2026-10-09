@@ -140,7 +140,6 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
       const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString() };
       newCodes.push(entry);
       existing.unshift(entry);
-      syncCodeToSheet(entry);
     }
 
     saveCodes(existing);
@@ -150,6 +149,7 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
       generateBulkQRPreview(newCodes);
       const msg = `${newCodes.length} code(s) added` + (skipped ? `, ${skipped} skipped (duplicates)` : '');
       showToast(msg);
+      pushCodesToSheet(newCodes).catch(reportSyncError);
     } else {
       showToast('All codes already exist');
     }
@@ -167,9 +167,9 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
     codes.unshift(entry);
     saveCodes(codes);
     generateQRPreview(code, label);
-    syncCodeToSheet(entry);
     document.getElementById('code-input').value = '';
     showToast('Code added');
+    pushCodesToSheet([entry]).catch(reportSyncError);
   }
 
   document.getElementById('code-label').value = '';
@@ -412,102 +412,99 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-// Sync codes from Google Sheet on load
-async function syncCodesFromSheet() {
+const REQUIRED_SCRIPT_VERSION = 3;
+
+async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
-  if (!scriptUrl) return;
-
-  try {
-    const response = await fetch(`${scriptUrl}?action=getCodes`);
-    const data = await response.json();
-
-    if (!data.codes) return;
-
-    const sheetCodes = data.codes.map(c => ({
-      code: String(c.code),
-      label: c.label || '',
-      expiry: c.expiry || null,
-      addedAt: c.addedAt || '',
-      active: c.active !== false,
-    }));
-
-    const localCodes = getCodes();
-    const sheetSet = new Set(sheetCodes.map(c => c.code));
-
-    const localOnly = localCodes.filter(c => !sheetSet.has(c.code));
-    localOnly.forEach(entry => syncCodeToSheet(entry));
-
-    const merged = [...sheetCodes, ...localOnly];
-    saveCodes(merged);
-  } catch {}
-}
-
-async function syncAndRender() {
-  showToast('Syncing...');
-  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
-  if (!scriptUrl) {
-    showToast('No script URL configured');
-    return;
-  }
-
-  try {
-    const response = await fetch(`${scriptUrl}?action=getCodes`);
-    const data = await response.json();
-
-    if (!data.codes) {
-      showToast('No codes returned from sheet');
-      return;
-    }
-
-    const sheetCodes = data.codes.map(c => ({
-      code: String(c.code),
-      label: c.label || '',
-      expiry: c.expiry || null,
-      addedAt: c.addedAt || '',
-      active: c.active !== false,
-    }));
-
-    const localCodes = getCodes();
-    const sheetSet = new Set(sheetCodes.map(c => c.code));
-    const localOnly = localCodes.filter(c => !sheetSet.has(c.code));
-    localOnly.forEach(entry => syncCodeToSheet(entry));
-
-    const merged = [...sheetCodes, ...localOnly];
-    saveCodes(merged);
-    renderCodesList();
-    showToast(`Synced: ${sheetCodes.length} from sheet, ${localOnly.length} local only`);
-  } catch (err) {
-    showToast('Sync failed: ' + err.message);
-  }
-}
-
-function writeToSheet(params) {
-  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
-  if (!scriptUrl) return;
+  if (!scriptUrl) throw new Error('No script URL configured');
 
   const query = Object.entries(params)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
 
-  fetch(`${scriptUrl}?${query}`).catch(() => {});
+  const res = await fetch(`${scriptUrl}?${query}`);
+  const data = await res.json();
+  if (data.error === 'Unknown action') {
+    throw new Error('Apps Script is outdated — paste the latest google-apps-script.js and redeploy');
+  }
+  if (data.error) throw new Error(data.error);
+  return data;
 }
 
-function syncCodeToSheet(entry) {
-  writeToSheet({
-    action: 'addCode',
-    code: entry.code,
-    label: entry.label || '',
-    expiry: entry.expiry || '',
-    addedAt: entry.addedAt,
-  });
+async function checkScriptVersion() {
+  let data;
+  try {
+    data = await callSheet({ action: 'ping' });
+  } catch (err) {
+    if (err.message.startsWith('Apps Script is outdated')) throw err;
+    throw new Error('Could not reach Apps Script: ' + err.message);
+  }
+  if ((data.version || 0) < REQUIRED_SCRIPT_VERSION) {
+    throw new Error('Apps Script is outdated — paste the latest google-apps-script.js and redeploy');
+  }
+}
+
+// Requests are chunked to keep URLs short and run one at a time so Apps Script doesn't drop concurrent writes.
+async function pushCodesToSheet(entries) {
+  let added = 0;
+  for (let i = 0; i < entries.length; i += 15) {
+    const chunk = entries.slice(i, i + 15).map(e => ({
+      code: e.code,
+      label: e.label || '',
+      expiry: e.expiry || '',
+      addedAt: e.addedAt || '',
+      active: e.active !== false,
+    }));
+    const data = await callSheet({ action: 'addCodes', codes: JSON.stringify(chunk) });
+    added += data.added || 0;
+  }
+  return added;
+}
+
+async function syncCodesFromSheet() {
+  await checkScriptVersion();
+
+  const data = await callSheet({ action: 'getCodes' });
+  const sheetCodes = (data.codes || []).map(c => ({
+    code: String(c.code),
+    label: c.label || '',
+    expiry: c.expiry || null,
+    addedAt: c.addedAt || '',
+    active: c.active !== false,
+  }));
+
+  const sheetSet = new Set(sheetCodes.map(c => c.code));
+  const localOnly = getCodes().filter(c => !sheetSet.has(c.code));
+  const pushed = localOnly.length ? await pushCodesToSheet(localOnly) : 0;
+
+  saveCodes([...localOnly, ...sheetCodes]);
+  return { fromSheet: sheetCodes.length, pushed };
+}
+
+async function syncAndRender(silent) {
+  if (!silent) showToast('Syncing...');
+  try {
+    const { fromSheet, pushed } = await syncCodesFromSheet();
+    renderCodesList();
+    if (!silent) {
+      showToast(pushed ? `Synced ${fromSheet} from sheet, uploaded ${pushed}` : `Synced ${fromSheet} codes`);
+    }
+  } catch (err) {
+    renderCodesList();
+    showToast('Sync failed: ' + err.message);
+  }
+}
+
+function reportSyncError(err) {
+  showToast('Sheet not updated: ' + err.message);
 }
 
 function syncUpdateToSheet(code, active) {
-  writeToSheet({ action: 'updateCode', code, active: active ? 'true' : 'false' });
+  callSheet({ action: 'updateCode', code, active: active ? 'true' : 'false' }).catch(reportSyncError);
 }
 
 function syncRemoveFromSheet(code) {
-  writeToSheet({ action: 'removeCode', code });
+  callSheet({ action: 'removeCode', code }).catch(reportSyncError);
 }
 
 // Scan log
