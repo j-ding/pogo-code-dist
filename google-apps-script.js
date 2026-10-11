@@ -11,7 +11,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 8;
+var SCRIPT_VERSION = 9;
 
 function jsonOut(obj) {
   return ContentService
@@ -620,6 +620,7 @@ function recordWinner(id, trainerName) {
     if (!found) return { error: 'Lottery not found' };
     var winners = found.lottery.winners;
     var already = winners.some(function(w) { return trainerKey(w) === trainerKey(trainerName); });
+    if (!already && winners.length) return { error: 'This lottery already has a winner' };
     if (!already) winners.push(trainerName);
     getLotteriesSheet().getRange(found.row, 6).setValue(JSON.stringify(winners));
     return { success: true, winners: winners };

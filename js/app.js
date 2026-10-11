@@ -69,18 +69,23 @@ function showToast(message) {
 }
 
 // Tabs
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById(tab.dataset.tab).classList.add('active');
+function activateTab(name) {
+  const tab = document.querySelector(`.tab[data-tab="${name}"]`);
+  if (!tab) return;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  tab.classList.add('active');
+  document.getElementById(name).classList.add('active');
+  try { localStorage.setItem('pogo_active_tab', name); } catch {}
 
-    if (tab.dataset.tab === 'active-codes') renderCodesList();
-    if (tab.dataset.tab === 'display') initDisplay();
-    if (tab.dataset.tab === 'scan-log') loadScanLog();
-    if (tab.dataset.tab === 'lottery') initLottery();
-  });
+  if (name === 'active-codes') renderCodesList();
+  if (name === 'display') initDisplay();
+  if (name === 'scan-log') loadScanLog();
+  if (name === 'lottery') initLottery();
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => activateTab(tab.dataset.tab));
 });
 
 // Date-only strings come from the date picker; the sheet returns full timestamps for the same dates.
@@ -186,6 +191,7 @@ function renderLotteryHeader(lottery) {
 
   document.getElementById('lottery-signup').classList.toggle('hidden', !lottery.open);
   document.getElementById('lottery-toggle').textContent = lottery.open ? 'Close Lottery' : 'Reopen';
+  updateDrawButton(lottery);
 
   const banner = document.getElementById('lottery-winner-banner');
   if (lottery.winners.length) {
@@ -373,6 +379,13 @@ function randomIndex(n) {
   return buf[0] % n;
 }
 
+function updateDrawButton(lottery) {
+  const button = document.getElementById('lottery-draw');
+  const hasWinner = lottery.winners.length > 0;
+  button.disabled = hasWinner || lotteryState.drawing;
+  button.title = hasWinner ? 'This lottery already has a winner. Use Undo Win to draw again.' : '';
+}
+
 function setLotteryButtonsDisabled(disabled) {
   ['lottery-draw', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete'].forEach(id => {
     document.getElementById(id).disabled = disabled;
@@ -383,6 +396,10 @@ function setLotteryButtonsDisabled(disabled) {
 async function drawLotteryWinner() {
   const lottery = selectedLottery();
   if (!lottery || lotteryState.drawing) return;
+  if (lottery.winners.length) {
+    showToast('This lottery already has a winner. Use Undo Win to draw again.');
+    return;
+  }
 
   if (lotteryState.editingKey) {
     lotteryState.editingKey = null;
@@ -424,11 +441,19 @@ async function drawLotteryWinner() {
     if (node) node.scrollIntoView({ block: 'center', behavior: 'smooth' });
     showToast(`Winner: ${winner.trainerName}`);
   } catch (err) {
-    showToast(`Picked ${winner.trainerName}, but saving failed: ${err.message}`);
-    winnerNode.classList.add('is-winner');
+    if (err.message.includes('already has a winner')) {
+      showToast('A winner was already drawn on another device');
+      lotteryState.drawing = false;
+      await loadLotteries();
+    } else {
+      showToast(`Picked ${winner.trainerName}, but saving failed: ${err.message}`);
+      winnerNode.classList.add('is-winner');
+    }
   } finally {
     lotteryState.drawing = false;
     setLotteryButtonsDisabled(false);
+    const current = selectedLottery();
+    if (current) updateDrawButton(current);
   }
 }
 
@@ -879,7 +904,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 8;
+const REQUIRED_SCRIPT_VERSION = 9;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -1215,3 +1240,10 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft') { displayIndex--; renderDisplayQR(); }
   if (e.key === 'ArrowRight') { displayIndex++; renderDisplayQR(); }
 });
+
+// Runs last so every tab's state and helpers are initialized before the saved tab loads.
+(function restoreTab() {
+  let saved = null;
+  try { saved = localStorage.getItem('pogo_active_tab'); } catch {}
+  if (saved && saved !== 'add-code') activateTab(saved);
+})();
