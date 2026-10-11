@@ -408,6 +408,32 @@ header h1 {
   margin-bottom: 0;
 }
 
+/* Community */
+.community-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.community-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 0;
+}
+
+.community-qr {
+  padding: 12px;
+  background: #ffffff;
+  border-radius: var(--radius-sm);
+}
+
+.community-qr canvas,
+.community-qr img {
+  display: block;
+}
+
 /* Lottery */
 .card-note {
   color: var(--text-secondary);

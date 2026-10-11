@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="1.6.2">
+  <meta name="app-version" content="1.7.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=1.6.2">
+  <link rel="stylesheet" href="css/style.css?v=1.7.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -55,6 +55,7 @@
       <button class="tab" data-tab="display">Display</button>
       <button class="tab" data-tab="scan-log">Scan Log</button>
       <button class="tab" data-tab="lottery">Lottery</button>
+      <button class="tab" data-tab="community">Community</button>
       <button class="tab" data-tab="settings">Settings</button>
     </nav>
 
@@ -223,6 +224,28 @@
         </div>
       </section>
 
+      <!-- Community Tab -->
+      <section id="community" class="tab-content">
+        <div class="community-grid">
+          <div class="card community-card" data-link="discord">
+            <h2>Join our Discord</h2>
+            <div class="community-qr" id="community-qr-discord"></div>
+            <div class="qr-actions">
+              <button class="btn btn-small btn-secondary" data-community-action="download">Download QR</button>
+              <button class="btn btn-small btn-secondary" data-community-action="copy">Copy Link</button>
+            </div>
+          </div>
+          <div class="card community-card" data-link="campfire">
+            <h2>Join us on Campfire</h2>
+            <div class="community-qr" id="community-qr-campfire"></div>
+            <div class="qr-actions">
+              <button class="btn btn-small btn-secondary" data-community-action="download">Download QR</button>
+              <button class="btn btn-small btn-secondary" data-community-action="copy">Copy Link</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Scan Log Tab -->
       <section id="scan-log" class="tab-content">
         <div class="card">
@@ -277,13 +300,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v1.6.2</span>
+      <span>v1.7.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=1.6.2"></script>
-  <script src="js/error-logger.js?v=1.6.2"></script>
-  <script src="js/auth.js?v=1.6.2"></script>
-  <script src="js/app.js?v=1.6.2"></script>
+  <script src="js/site-config.js?v=1.7.0"></script>
+  <script src="js/error-logger.js?v=1.7.0"></script>
+  <script src="js/auth.js?v=1.7.0"></script>
+  <script src="js/app.js?v=1.7.0"></script>
 </body>
 </html>

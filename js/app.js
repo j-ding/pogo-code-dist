@@ -82,7 +82,57 @@ function activateTab(name) {
   if (name === 'display') initDisplay();
   if (name === 'scan-log') loadScanLog();
   if (name === 'lottery') initLottery();
+  if (name === 'community') initCommunity();
 }
+
+const COMMUNITY_LINKS = {
+  discord: 'https://discord.gg/EhGPPT4sPA',
+  campfire: 'https://campfire.onelink.me/eBr8?af_dp=campfire://&af_force_deeplink=true&deep_link_sub1=cj1jbHVicyZjPWU1N2IyZWZhLTI5NTktNDA2MC1hNzg5LWI4ZGIyZDU3OWFhNiZpPXRydWU=',
+};
+
+let communityRendered = false;
+
+function initCommunity() {
+  if (communityRendered) return;
+  communityRendered = true;
+  const size = Math.min(window.innerWidth - 96, 240);
+  Object.entries(COMMUNITY_LINKS).forEach(([key, url]) => {
+    new QRCode(document.getElementById(`community-qr-${key}`), {
+      text: url,
+      width: size,
+      height: size,
+      colorDark: '#1a1a2e',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.L,
+    });
+  });
+}
+
+document.getElementById('community').addEventListener('click', (e) => {
+  const button = e.target.closest('[data-community-action]');
+  if (!button) return;
+  const key = button.closest('.community-card').dataset.link;
+
+  if (button.dataset.communityAction === 'copy') {
+    navigator.clipboard.writeText(COMMUNITY_LINKS[key]).then(() => showToast('Link copied'));
+    return;
+  }
+  const canvas = document.querySelector(`#community-qr-${key} canvas`);
+  if (!canvas) return;
+  // QR scanners need a white quiet zone around the code, which the raw canvas doesn't include.
+  const margin = Math.round(canvas.width * 0.08);
+  const out = document.createElement('canvas');
+  out.width = canvas.width + margin * 2;
+  out.height = canvas.height + margin * 2;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(canvas, margin, margin);
+  const link = document.createElement('a');
+  link.download = `pogo-${key}-qr.png`;
+  link.href = out.toDataURL('image/png');
+  link.click();
+});
 
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => activateTab(tab.dataset.tab));
