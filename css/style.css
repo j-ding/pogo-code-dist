@@ -563,6 +563,16 @@ header h1 {
   flex-wrap: wrap;
 }
 
+.winner-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.winner-count select {
+  padding: 4px 8px;
+}
+
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

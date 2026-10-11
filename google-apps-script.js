@@ -11,7 +11,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 9;
+var SCRIPT_VERSION = 10;
 
 function jsonOut(obj) {
   return ContentService
@@ -57,6 +57,10 @@ function doGet(e) {
 
   if (action === 'recordWinner') {
     return jsonOut(recordWinner(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'setWinnerCount') {
+    return jsonOut(setWinnerCount(p.id || '', p.count || ''));
   }
 
   if (action === 'updateLottery') {
@@ -508,7 +512,7 @@ function withLock(fn) {
   }
 }
 
-// Lotteries tab: Id | Name | Created At | Since | Closed At | Winners (JSON array) | Overrides (JSON)
+// Lotteries tab: Id | Name | Created At | Since | Closed At | Winners (JSON array) | Overrides (JSON) | Winner Count
 // Overrides = { excluded: [trainerKey], renames: { originalTrainerKey: displayName } } so admin edits
 // apply to code redeemers too without touching the ScanLog.
 function getLotteriesSheet() {
@@ -516,9 +520,9 @@ function getLotteriesSheet() {
   var sheet = ss.getSheetByName('Lotteries');
   if (!sheet) {
     sheet = ss.insertSheet('Lotteries');
-    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners', 'Overrides']);
-  } else if (sheet.getLastColumn() < 7) {
-    sheet.getRange(1, 7).setValue('Overrides');
+    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners', 'Overrides', 'Winner Count']);
+  } else if (sheet.getLastColumn() < 8) {
+    sheet.getRange(1, 7, 1, 2).setValues([['Overrides', 'Winner Count']]);
   }
   return sheet;
 }
@@ -566,7 +570,8 @@ function readLotteries() {
         since: toIso(rows[i][3]),
         closedAt: closedAt,
         open: !closedAt,
-        winners: winners
+        winners: winners,
+        winnerCount: Math.max(1, parseInt(rows[i][7], 10) || 1)
       }
     });
   }
@@ -591,10 +596,10 @@ function createLottery(name, since) {
   return withLock(function() {
     var id = Utilities.getUuid().split('-')[0];
     var now = new Date().toISOString();
-    getLotteriesSheet().appendRow([id, name, now, sinceIso, '', '[]', '{}']);
+    getLotteriesSheet().appendRow([id, name, now, sinceIso, '', '[]', '{}', 1]);
     return {
       success: true,
-      lottery: { id: id, name: name, createdAt: now, since: sinceIso, closedAt: '', open: true, winners: [] }
+      lottery: { id: id, name: name, createdAt: now, since: sinceIso, closedAt: '', open: true, winners: [], winnerCount: 1 }
     };
   });
 }
@@ -620,10 +625,26 @@ function recordWinner(id, trainerName) {
     if (!found) return { error: 'Lottery not found' };
     var winners = found.lottery.winners;
     var already = winners.some(function(w) { return trainerKey(w) === trainerKey(trainerName); });
-    if (!already && winners.length) return { error: 'This lottery already has a winner' };
+    if (!already && winners.length >= found.lottery.winnerCount) return { error: 'All winners have been drawn' };
     if (!already) winners.push(trainerName);
     getLotteriesSheet().getRange(found.row, 6).setValue(JSON.stringify(winners));
     return { success: true, winners: winners };
+  });
+}
+
+function setWinnerCount(id, count) {
+  count = parseInt(count, 10);
+  if (!(count >= 1 && count <= 10)) return { error: 'Winner count must be between 1 and 10' };
+
+  return withLock(function() {
+    var found = findLottery(id);
+    if (!found) return { error: 'Lottery not found' };
+    if (count < found.lottery.winners.length) {
+      return { error: found.lottery.winners.length + ' winners are already drawn. Undo a win first.' };
+    }
+    getLotteriesSheet().getRange(found.row, 8).setValue(count);
+    found.lottery.winnerCount = count;
+    return { success: true, lottery: found.lottery };
   });
 }
 

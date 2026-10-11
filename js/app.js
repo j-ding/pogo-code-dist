@@ -429,44 +429,97 @@ function randomIndex(n) {
   return buf[0] % n;
 }
 
-function updateDrawButton(lottery) {
-  const button = document.getElementById('lottery-draw');
-  const hasWinner = lottery.winners.length > 0;
-  button.disabled = hasWinner || lotteryState.drawing;
-  button.title = hasWinner ? 'This lottery already has a winner. Use Undo Win to draw again.' : '';
+function winnerCountOf(lottery) {
+  return lottery.winnerCount || 1;
 }
 
+function updateDrawButton(lottery) {
+  const button = document.getElementById('lottery-draw');
+  const allButton = document.getElementById('lottery-draw-all');
+  const count = winnerCountOf(lottery);
+  const drawn = lottery.winners.length;
+  const remaining = Math.max(count - drawn, 0);
+  const done = remaining === 0;
+
+  button.disabled = done || lotteryState.drawing;
+  button.textContent = done ? (count > 1 ? 'All Winners Drawn' : 'Winner Drawn') : 'Choose 1 Winner';
+  button.title = done ? 'All winners have been drawn. Raise the winner count or use Undo Win to draw again.'
+    : count > 1 ? `Winner ${drawn + 1} of ${count}` : '';
+
+  allButton.classList.toggle('hidden', remaining < 2);
+  allButton.disabled = lotteryState.drawing;
+  allButton.textContent = `Choose ${remaining} Winners`;
+
+  const select = document.getElementById('lottery-winner-count');
+  select.value = String(count);
+  select.disabled = lotteryState.drawing;
+  [...select.options].forEach(o => { o.disabled = Number(o.value) < Math.max(drawn, 1); });
+}
+
+document.getElementById('lottery-winner-count').addEventListener('change', async (e) => {
+  const lottery = selectedLottery();
+  if (!lottery) return;
+  const count = Number(e.target.value);
+  try {
+    const data = await callSheet({ action: 'setWinnerCount', id: lottery.id, count });
+    Object.assign(lottery, data.lottery);
+    showToast(`${count} winner${count > 1 ? 's' : ''} will be drawn`);
+  } catch (err) {
+    showToast('Could not change winner count: ' + err.message);
+  }
+  updateDrawButton(lottery);
+});
+
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete'].forEach(id => {
+  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
   document.getElementById('lottery-list').classList.toggle('is-busy', disabled);
 }
 
-async function drawLotteryWinner() {
+// Draws `count` winners one after another. Previous winners are never in the pool, so nobody wins twice.
+async function drawLotteryWinners(count) {
   const lottery = selectedLottery();
   if (!lottery || lotteryState.drawing) return;
-  if (lottery.winners.length) {
-    showToast('This lottery already has a winner. Use Undo Win to draw again.');
+  if (lottery.winners.length >= winnerCountOf(lottery)) {
+    showToast('All winners have been drawn. Raise the winner count or use Undo Win to draw again.');
     return;
   }
-
   if (lotteryState.editingKey) {
     lotteryState.editingKey = null;
     renderLotteryEntrants();
   }
+
+  lotteryState.drawing = true;
+  setLotteryButtonsDisabled(true);
+  const picked = [];
+  try {
+    for (let i = 0; i < count; i++) {
+      const name = await drawOneWinner(lottery);
+      if (!name) break;
+      picked.push(name);
+      if (i < count - 1) await new Promise(r => setTimeout(r, 900));
+    }
+    if (picked.length > 1) showToast(`Winners: ${picked.join(', ')}`);
+  } finally {
+    lotteryState.drawing = false;
+    setLotteryButtonsDisabled(false);
+    const current = selectedLottery();
+    if (current) updateDrawButton(current);
+  }
+}
+
+// Returns the winner's name, or null if nothing could be drawn.
+async function drawOneWinner(lottery) {
   const pool = lotteryState.entrants.filter(e => !isWinner(lottery, e.trainerName));
   if (pool.length === 0) {
     showToast(lotteryState.entrants.length ? 'Everyone has already won' : 'No entrants to draw from');
-    return;
+    return null;
   }
 
   const winner = pool[randomIndex(pool.length)];
   const nodes = pool.map(e => document.querySelector(`.lottery-entrant[data-key="${CSS.escape(trainerKey(e.trainerName))}"]`));
   const winnerNode = nodes[pool.indexOf(winner)];
-
-  lotteryState.drawing = true;
-  setLotteryButtonsDisabled(true);
 
   const ticks = pool.length > 1 ? 24 : 1;
   let last = null;
@@ -487,23 +540,20 @@ async function drawLotteryWinner() {
     renderLotteryHeader(lottery);
     renderLotteryHistory();
     renderLotteryEntrants();
+    setLotteryButtonsDisabled(true);
     const node = document.querySelector(`.lottery-entrant[data-key="${CSS.escape(trainerKey(winner.trainerName))}"]`);
     if (node) node.scrollIntoView({ block: 'center', behavior: 'smooth' });
     showToast(`Winner: ${winner.trainerName}`);
+    return winner.trainerName;
   } catch (err) {
-    if (err.message.includes('already has a winner')) {
-      showToast('A winner was already drawn on another device');
-      lotteryState.drawing = false;
+    if (err.message.includes('All winners have been drawn')) {
+      showToast('The winners were already drawn on another device');
       await loadLotteries();
     } else {
       showToast(`Picked ${winner.trainerName}, but saving failed: ${err.message}`);
       winnerNode.classList.add('is-winner');
     }
-  } finally {
-    lotteryState.drawing = false;
-    setLotteryButtonsDisabled(false);
-    const current = selectedLottery();
-    if (current) updateDrawButton(current);
+    return null;
   }
 }
 
@@ -608,7 +658,11 @@ document.getElementById('lottery-delete').addEventListener('click', async () => 
   }
 });
 
-document.getElementById('lottery-draw').addEventListener('click', drawLotteryWinner);
+document.getElementById('lottery-draw').addEventListener('click', () => drawLotteryWinners(1));
+document.getElementById('lottery-draw-all').addEventListener('click', () => {
+  const lottery = selectedLottery();
+  if (lottery) drawLotteryWinners(winnerCountOf(lottery) - lottery.winners.length);
+});
 document.getElementById('lottery-refresh').addEventListener('click', loadLotteryEntrants);
 
 document.getElementById('lottery-copy-link').addEventListener('click', () => {
@@ -954,7 +1008,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 9;
+const REQUIRED_SCRIPT_VERSION = 10;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
