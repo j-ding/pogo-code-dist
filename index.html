@@ -53,6 +53,7 @@
       <button class="tab" data-tab="active-codes">Active Codes</button>
       <button class="tab" data-tab="display">Display</button>
       <button class="tab" data-tab="scan-log">Scan Log</button>
+      <button class="tab" data-tab="lottery">Lottery</button>
       <button class="tab" data-tab="settings">Settings</button>
     </nav>
 
@@ -143,6 +144,61 @@
         </div>
       </section>
 
+      <!-- Lottery Tab -->
+      <section id="lottery" class="tab-content">
+        <div class="card">
+          <h2>New Lottery</h2>
+          <form id="lottery-create-form" class="lottery-create">
+            <div class="form-group">
+              <label for="lottery-name">Name</label>
+              <input type="text" id="lottery-name" placeholder="e.g. Community Day Raffle" maxlength="60" required>
+            </div>
+            <div class="form-group">
+              <label for="lottery-since">Check-in date</label>
+              <input type="date" id="lottery-since" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Create Lottery</button>
+          </form>
+        </div>
+
+        <div id="lottery-detail" class="card hidden">
+          <div class="codes-header">
+            <h2 id="lottery-title"></h2>
+            <span id="lottery-status" class="badge"></span>
+          </div>
+          <p id="lottery-meta" class="card-note"></p>
+
+          <div id="lottery-signup" class="lottery-signup">
+            <div id="lottery-qr"></div>
+            <div class="qr-actions">
+              <button id="lottery-download-qr" class="btn btn-small btn-secondary">Download QR</button>
+              <button id="lottery-copy-link" class="btn btn-small btn-secondary">Copy Sign-Up Link</button>
+            </div>
+          </div>
+
+          <div id="lottery-winner-banner" class="winner-banner hidden"></div>
+
+          <div class="lottery-toolbar">
+            <h3>Entrants <span id="lottery-count" class="count-pill">0</span></h3>
+            <div class="lottery-toolbar-actions">
+              <button id="lottery-refresh" class="btn btn-small btn-secondary">Refresh</button>
+              <button id="lottery-toggle" class="btn btn-small btn-secondary"></button>
+              <button id="lottery-draw" class="btn btn-small btn-primary">Choose Winner</button>
+            </div>
+          </div>
+          <div id="lottery-list" class="lottery-list">
+            <p class="empty-state">No entrants yet.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>History</h2>
+          <div id="lottery-history" class="lottery-history">
+            <p class="empty-state">No lotteries yet.</p>
+          </div>
+        </div>
+      </section>
+
       <!-- Scan Log Tab -->
       <section id="scan-log" class="tab-content">
         <div class="card">
@@ -168,11 +224,6 @@
               <label for="script-url">Google Apps Script Web App URL</label>
               <input type="url" id="script-url" placeholder="https://script.google.com/macros/s/.../exec">
               <small>Deploy your Apps Script as a web app and paste the URL here.</small>
-            </div>
-            <div class="form-group">
-              <label for="site-base-url">Site Base URL</label>
-              <input type="url" id="site-base-url" placeholder="https://yourusername.github.io/pogo-code-dist">
-              <small>Your GitHub Pages URL. Used to generate QR code links.</small>
             </div>
             <button type="submit" class="btn btn-primary">Save Settings</button>
           </form>
@@ -202,7 +253,7 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v1.3.0</span>
+      <span>v1.5.3</span>
     </footer>
   </div>
 

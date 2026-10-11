@@ -1,7 +1,6 @@
 const STORAGE_KEYS = {
   CODES: 'pogo_codes',
   SCRIPT_URL: 'pogo_script_url',
-  BASE_URL: 'pogo_base_url',
 };
 
 function getCodes() {
@@ -43,10 +42,11 @@ function saveSetting(key, value) {
   } catch {}
 }
 
+// QR codes and shared links always point at the live site, even when the dashboard runs on localhost.
+const PUBLIC_SITE_URL = 'https://j-ding.github.io/pogo-code-dist';
+
 function getBaseUrl() {
-  const saved = getSetting(STORAGE_KEYS.BASE_URL);
-  if (saved) return saved.replace(/\/$/, '');
-  return window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '');
+  return PUBLIC_SITE_URL;
 }
 
 function getRedeemUrl(code) {
@@ -79,7 +79,298 @@ document.querySelectorAll('.tab').forEach(tab => {
     if (tab.dataset.tab === 'active-codes') renderCodesList();
     if (tab.dataset.tab === 'display') initDisplay();
     if (tab.dataset.tab === 'scan-log') loadScanLog();
+    if (tab.dataset.tab === 'lottery') initLottery();
   });
+});
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+// Lottery
+const lotteryState = { lotteries: [], selectedId: null, entrants: [], drawing: false };
+
+function getLotteryUrl(id) {
+  return `${getBaseUrl()}/lottery.html?id=${encodeURIComponent(id)}`;
+}
+
+function todayInputValue() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function selectedLottery() {
+  return lotteryState.lotteries.find(l => l.id === lotteryState.selectedId) || null;
+}
+
+function trainerKey(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function isWinner(lottery, name) {
+  return lottery.winners.some(w => trainerKey(w) === trainerKey(name));
+}
+
+function initLottery() {
+  const sinceInput = document.getElementById('lottery-since');
+  if (!sinceInput.value) sinceInput.value = todayInputValue();
+  loadLotteries();
+}
+
+async function loadLotteries() {
+  const history = document.getElementById('lottery-history');
+  try {
+    const data = await callSheet({ action: 'getLotteries' });
+    lotteryState.lotteries = data.lotteries || [];
+  } catch (err) {
+    history.innerHTML = `<p class="empty-state">Couldn't load lotteries: ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+
+  let saved = null;
+  try { saved = localStorage.getItem('pogo_lottery_selected'); } catch {}
+  const exists = id => lotteryState.lotteries.some(l => l.id === id);
+  const id = exists(lotteryState.selectedId) ? lotteryState.selectedId
+    : exists(saved) ? saved
+    : (lotteryState.lotteries[0] && lotteryState.lotteries[0].id);
+
+  renderLotteryHistory();
+  if (id) selectLottery(id);
+  else document.getElementById('lottery-detail').classList.add('hidden');
+}
+
+function renderLotteryHistory() {
+  const history = document.getElementById('lottery-history');
+  if (lotteryState.lotteries.length === 0) {
+    history.innerHTML = '<p class="empty-state">No lotteries yet. Create one above.</p>';
+    return;
+  }
+
+  history.innerHTML = lotteryState.lotteries.map(l => `
+    <button type="button" class="lottery-history-item${l.id === lotteryState.selectedId ? ' selected' : ''}" data-id="${escapeHtml(l.id)}">
+      <span class="lottery-history-main">
+        <span class="lottery-name">${escapeHtml(l.name)}</span>
+        <span class="code-meta">${new Date(l.createdAt).toLocaleDateString()}${l.winners.length ? ' · Winner: ' + escapeHtml(l.winners.join(', ')) : ''}</span>
+      </span>
+      <span class="badge ${l.open ? 'badge-active' : 'badge-inactive'}">${l.open ? 'Open' : 'Closed'}</span>
+    </button>
+  `).join('');
+
+  history.querySelectorAll('.lottery-history-item').forEach(el => {
+    el.addEventListener('click', () => selectLottery(el.dataset.id));
+  });
+}
+
+function renderLotteryHeader(lottery) {
+  document.getElementById('lottery-title').textContent = lottery.name;
+
+  const status = document.getElementById('lottery-status');
+  status.textContent = lottery.open ? 'Open' : 'Closed';
+  status.className = `badge ${lottery.open ? 'badge-active' : 'badge-inactive'}`;
+
+  const checkIn = new Date(lottery.since).toLocaleDateString();
+  const closed = lottery.closedAt ? ` · Closed ${new Date(lottery.closedAt).toLocaleString()}` : '';
+  document.getElementById('lottery-meta').textContent = `Check-in date: ${checkIn}${closed}`;
+
+  document.getElementById('lottery-signup').classList.toggle('hidden', !lottery.open);
+  document.getElementById('lottery-toggle').textContent = lottery.open ? 'Close Lottery' : 'Reopen';
+
+  const banner = document.getElementById('lottery-winner-banner');
+  if (lottery.winners.length) {
+    banner.textContent = `Winner${lottery.winners.length > 1 ? 's' : ''}: ${lottery.winners.join(', ')}`;
+    banner.classList.remove('hidden');
+  } else {
+    banner.classList.add('hidden');
+  }
+}
+
+function selectLottery(id) {
+  const lottery = lotteryState.lotteries.find(l => l.id === id);
+  if (!lottery) return;
+
+  lotteryState.selectedId = id;
+  try { localStorage.setItem('pogo_lottery_selected', id); } catch {}
+
+  document.getElementById('lottery-detail').classList.remove('hidden');
+  renderLotteryHeader(lottery);
+  renderLotteryHistory();
+
+  const qr = document.getElementById('lottery-qr');
+  qr.innerHTML = '';
+  new QRCode(qr, {
+    text: getLotteryUrl(id),
+    width: 180,
+    height: 180,
+    colorDark: '#1a1a2e',
+    colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M,
+  });
+
+  loadLotteryEntrants();
+}
+
+async function loadLotteryEntrants() {
+  const lottery = selectedLottery();
+  if (!lottery) return;
+
+  const list = document.getElementById('lottery-list');
+  list.innerHTML = '<p class="empty-state">Loading entrants...</p>';
+
+  try {
+    const data = await callSheet({ action: 'getLotteryEntrants', id: lottery.id });
+    if (lotteryState.selectedId !== lottery.id) return;
+    lotteryState.entrants = data.entrants || [];
+    renderLotteryEntrants();
+  } catch (err) {
+    lotteryState.entrants = [];
+    document.getElementById('lottery-count').textContent = '0';
+    list.innerHTML = `<p class="empty-state">Couldn't load entrants: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderLotteryEntrants() {
+  const lottery = selectedLottery();
+  const list = document.getElementById('lottery-list');
+  const entrants = lotteryState.entrants;
+  document.getElementById('lottery-count').textContent = entrants.length;
+
+  if (entrants.length === 0) {
+    list.innerHTML = '<p class="empty-state">No entrants yet.</p>';
+    return;
+  }
+
+  list.innerHTML = entrants.map(e => {
+    const badges = [
+      isWinner(lottery, e.trainerName) ? '<span class="badge badge-winner">Winner</span>' : '',
+      e.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : '',
+      e.signedUp ? '<span class="badge badge-new">Lottery sign-up</span>' : '',
+    ].join(' ');
+    return `
+      <div class="lottery-entrant${isWinner(lottery, e.trainerName) ? ' is-winner' : ''}" data-key="${escapeHtml(trainerKey(e.trainerName))}">
+        <span class="lottery-name">${escapeHtml(e.trainerName)}</span>
+        <span class="lottery-badges">${badges}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function randomIndex(n) {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] % n;
+}
+
+function setLotteryButtonsDisabled(disabled) {
+  ['lottery-draw', 'lottery-refresh', 'lottery-toggle'].forEach(id => {
+    document.getElementById(id).disabled = disabled;
+  });
+}
+
+async function drawLotteryWinner() {
+  const lottery = selectedLottery();
+  if (!lottery || lotteryState.drawing) return;
+
+  const pool = lotteryState.entrants.filter(e => !isWinner(lottery, e.trainerName));
+  if (pool.length === 0) {
+    showToast(lotteryState.entrants.length ? 'Everyone has already won' : 'No entrants to draw from');
+    return;
+  }
+
+  const winner = pool[randomIndex(pool.length)];
+  const nodes = pool.map(e => document.querySelector(`.lottery-entrant[data-key="${CSS.escape(trainerKey(e.trainerName))}"]`));
+  const winnerNode = nodes[pool.indexOf(winner)];
+
+  lotteryState.drawing = true;
+  setLotteryButtonsDisabled(true);
+
+  const ticks = pool.length > 1 ? 24 : 1;
+  let last = null;
+  for (let i = 0; i < ticks; i++) {
+    let node = i === ticks - 1 ? winnerNode : nodes[randomIndex(nodes.length)];
+    if (node === last && nodes.length > 1 && i !== ticks - 1) node = nodes[(nodes.indexOf(node) + 1) % nodes.length];
+    if (last) last.classList.remove('is-drawing');
+    node.classList.add('is-drawing');
+    node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    last = node;
+    await new Promise(r => setTimeout(r, 50 + i * i * 0.8));
+  }
+  winnerNode.classList.remove('is-drawing');
+
+  try {
+    const data = await callSheet({ action: 'recordWinner', id: lottery.id, trainerName: winner.trainerName });
+    lottery.winners = data.winners || [...lottery.winners, winner.trainerName];
+    renderLotteryHeader(lottery);
+    renderLotteryHistory();
+    renderLotteryEntrants();
+    const node = document.querySelector(`.lottery-entrant[data-key="${CSS.escape(trainerKey(winner.trainerName))}"]`);
+    if (node) node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    showToast(`Winner: ${winner.trainerName}`);
+  } catch (err) {
+    showToast(`Picked ${winner.trainerName}, but saving failed: ${err.message}`);
+    winnerNode.classList.add('is-winner');
+  } finally {
+    lotteryState.drawing = false;
+    setLotteryButtonsDisabled(false);
+  }
+}
+
+document.getElementById('lottery-create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('lottery-name').value.trim();
+  const sinceValue = document.getElementById('lottery-since').value || todayInputValue();
+  if (!name) return;
+
+  const [y, m, d] = sinceValue.split('-').map(Number);
+  const since = new Date(y, m - 1, d).toISOString();
+  const button = e.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+
+  try {
+    const data = await callSheet({ action: 'createLottery', name, since });
+    document.getElementById('lottery-name').value = '';
+    lotteryState.selectedId = data.lottery.id;
+    await loadLotteries();
+    showToast('Lottery created');
+  } catch (err) {
+    showToast('Could not create lottery: ' + err.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('lottery-toggle').addEventListener('click', async () => {
+  const lottery = selectedLottery();
+  if (!lottery) return;
+  if (lottery.open && !confirm(`Close "${lottery.name}"? New sign-ups will be turned away and later code redemptions won't count.`)) return;
+
+  try {
+    const data = await callSheet({ action: 'setLotteryStatus', id: lottery.id, open: lottery.open ? 'false' : 'true' });
+    Object.assign(lottery, data.lottery);
+    selectLottery(lottery.id);
+    showToast(lottery.open ? 'Lottery reopened' : 'Lottery closed');
+  } catch (err) {
+    showToast('Could not update lottery: ' + err.message);
+  }
+});
+
+document.getElementById('lottery-draw').addEventListener('click', drawLotteryWinner);
+document.getElementById('lottery-refresh').addEventListener('click', loadLotteryEntrants);
+
+document.getElementById('lottery-copy-link').addEventListener('click', () => {
+  if (!lotteryState.selectedId) return;
+  navigator.clipboard.writeText(getLotteryUrl(lotteryState.selectedId)).then(() => showToast('Sign-up link copied'));
+});
+
+document.getElementById('lottery-download-qr').addEventListener('click', () => {
+  const lottery = selectedLottery();
+  const canvas = document.querySelector('#lottery-qr canvas');
+  if (!lottery || !canvas) return;
+  const link = document.createElement('a');
+  link.download = `pogo-lottery-${lottery.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
 });
 
 // Setup banner
@@ -92,12 +383,10 @@ checkSetup();
 // Settings form
 const settingsForm = document.getElementById('settings-form');
 document.getElementById('script-url').value = getSetting(STORAGE_KEYS.SCRIPT_URL);
-document.getElementById('site-base-url').value = getSetting(STORAGE_KEYS.BASE_URL);
 
 settingsForm.addEventListener('submit', (e) => {
   e.preventDefault();
   saveSetting(STORAGE_KEYS.SCRIPT_URL, document.getElementById('script-url').value.trim());
-  saveSetting(STORAGE_KEYS.BASE_URL, document.getElementById('site-base-url').value.trim());
   checkSetup();
   showToast('Settings saved');
 });
@@ -412,7 +701,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 3;
+const REQUIRED_SCRIPT_VERSION = 7;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -560,14 +849,14 @@ function renderLogTable(logs) {
         ${filtered.map(log => `
           <tr>
             <td>${new Date(log.timestamp).toLocaleString()}</td>
-            <td><strong>${log.code || ''}</strong></td>
-            <td>${log.trainerName || ''}</td>
-            <td>${log.device || ''}</td>
-            <td>${log.os || ''}</td>
-            <td>${log.browser || ''}</td>
-            <td>${log.city || ''}</td>
-            <td>${log.country || ''}</td>
-            <td>${log.language || ''}</td>
+            <td><strong>${escapeHtml(log.code)}</strong></td>
+            <td>${escapeHtml(log.trainerName)}</td>
+            <td>${escapeHtml(log.device)}</td>
+            <td>${escapeHtml(log.os)}</td>
+            <td>${escapeHtml(log.browser)}</td>
+            <td>${escapeHtml(log.city)}</td>
+            <td>${escapeHtml(log.country)}</td>
+            <td>${escapeHtml(log.language)}</td>
             <td><span class="badge ${log.repeat ? 'badge-repeat' : 'badge-new'}">${log.repeat ? 'Repeat' : 'New'}</span></td>
           </tr>
         `).join('')}
@@ -628,9 +917,9 @@ async function loadErrorLog() {
           ${data.errors.map(err => `
             <tr>
               <td>${new Date(err.timestamp).toLocaleString()}</td>
-              <td>${err.page || ''}</td>
-              <td title="${(err.stack || '').replace(/"/g, '&quot;')}">${err.error || ''}</td>
-              <td>${err.userAgent ? err.userAgent.slice(0, 40) + '...' : ''}</td>
+              <td>${escapeHtml(err.page)}</td>
+              <td title="${escapeHtml(err.stack)}">${escapeHtml(err.error)}</td>
+              <td>${err.userAgent ? escapeHtml(err.userAgent.slice(0, 40)) + '...' : ''}</td>
             </tr>
           `).join('')}
         </tbody>

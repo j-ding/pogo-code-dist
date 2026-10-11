@@ -11,7 +11,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 3;
+var SCRIPT_VERSION = 7;
 
 function jsonOut(obj) {
   return ContentService
@@ -34,6 +34,37 @@ function doGet(e) {
       return jsonOut({ error: 'Invalid codes JSON' });
     }
     return jsonOut(addCodes(list));
+  }
+
+  var p = e.parameter;
+
+  if (action === 'createLottery') {
+    return jsonOut(createLottery(p.name || '', p.since || ''));
+  }
+
+  if (action === 'getLotteries') {
+    return jsonOut({ lotteries: readLotteries().map(function(r) { return r.lottery; }) });
+  }
+
+  if (action === 'getLottery') {
+    var found = findLottery(p.id || '');
+    return jsonOut({ lottery: found ? { name: found.lottery.name, open: found.lottery.open } : null });
+  }
+
+  if (action === 'setLotteryStatus') {
+    return jsonOut(setLotteryStatus(p.id || '', p.open === 'true'));
+  }
+
+  if (action === 'recordWinner') {
+    return jsonOut(recordWinner(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'joinLottery') {
+    return jsonOut(joinLottery(p.id || '', p.trainerName || '', p.deviceId || ''));
+  }
+
+  if (action === 'getLotteryEntrants') {
+    return jsonOut(getLotteryEntrants(p.id || ''));
   }
 
   if (action === 'getLogs') {
@@ -439,6 +470,230 @@ function checkCooldown(trainerName) {
   return ContentService
     .createTextOutput(JSON.stringify({ recentCodes: recentCodes, count: recentCodes.length }))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function toIso(value) {
+  if (!value) return '';
+  var d = value instanceof Date ? value : new Date(value);
+  return isNaN(d.getTime()) ? '' : d.toISOString();
+}
+
+function withLock(fn) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Lotteries tab: Id | Name | Created At | Since | Closed At | Winners (JSON array)
+function getLotteriesSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Lotteries');
+  if (!sheet) {
+    sheet = ss.insertSheet('Lotteries');
+    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners']);
+  }
+  return sheet;
+}
+
+// Lottery tab: Timestamp | Trainer Name | Device ID | Lottery ID
+function getLotteryEntriesSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Lottery');
+  if (!sheet) {
+    sheet = ss.insertSheet('Lottery');
+    sheet.appendRow(['Timestamp', 'Trainer Name', 'Device ID', 'Lottery ID']);
+  } else if (sheet.getLastColumn() < 4) {
+    sheet.getRange(1, 4).setValue('Lottery ID');
+  }
+  return sheet;
+}
+
+function readLotteries() {
+  var rows = getLotteriesSheet().getDataRange().getValues();
+  var list = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    var winners = [];
+    try { winners = JSON.parse(rows[i][5] || '[]'); } catch (err) {}
+    var closedAt = toIso(rows[i][4]);
+    list.push({
+      row: i + 1,
+      lottery: {
+        id: String(rows[i][0]),
+        name: String(rows[i][1]),
+        createdAt: toIso(rows[i][2]),
+        since: toIso(rows[i][3]),
+        closedAt: closedAt,
+        open: !closedAt,
+        winners: winners
+      }
+    });
+  }
+  list.sort(function(a, b) { return a.lottery.createdAt < b.lottery.createdAt ? 1 : -1; });
+  return list;
+}
+
+function findLottery(id) {
+  if (!id) return null;
+  var all = readLotteries();
+  for (var i = 0; i < all.length; i++) {
+    if (all[i].lottery.id === id) return all[i];
+  }
+  return null;
+}
+
+function createLottery(name, since) {
+  name = String(name).trim().slice(0, 60);
+  if (!name) return { error: 'Lottery name is required' };
+  var sinceIso = toIso(since) || new Date().toISOString();
+
+  return withLock(function() {
+    var id = Utilities.getUuid().split('-')[0];
+    var now = new Date().toISOString();
+    getLotteriesSheet().appendRow([id, name, now, sinceIso, '', '[]']);
+    return {
+      success: true,
+      lottery: { id: id, name: name, createdAt: now, since: sinceIso, closedAt: '', open: true, winners: [] }
+    };
+  });
+}
+
+function setLotteryStatus(id, open) {
+  return withLock(function() {
+    var found = findLottery(id);
+    if (!found) return { error: 'Lottery not found' };
+    var closedAt = open ? '' : new Date().toISOString();
+    getLotteriesSheet().getRange(found.row, 5).setValue(closedAt);
+    found.lottery.closedAt = closedAt;
+    found.lottery.open = open;
+    return { success: true, lottery: found.lottery };
+  });
+}
+
+function recordWinner(id, trainerName) {
+  trainerName = String(trainerName).trim();
+  if (!trainerName) return { error: 'Trainer name is required' };
+
+  return withLock(function() {
+    var found = findLottery(id);
+    if (!found) return { error: 'Lottery not found' };
+    var winners = found.lottery.winners;
+    var already = winners.some(function(w) { return trainerKey(w) === trainerKey(trainerName); });
+    if (!already) winners.push(trainerName);
+    getLotteriesSheet().getRange(found.row, 6).setValue(JSON.stringify(winners));
+    return { success: true, winners: winners };
+  });
+}
+
+// Pokemon Go trainer names are letters and numbers only, so spacing/case differences are the same trainer.
+function trainerKey(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function joinLottery(id, trainerName, deviceId) {
+  trainerName = String(trainerName).replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9]+$/.test(trainerName)) {
+    return { success: false, error: 'Trainer names are letters and numbers only' };
+  }
+  deviceId = String(deviceId || '');
+  var trackDevice = deviceId && deviceId !== 'dev-unknown';
+
+  return withLock(function() {
+    var found = findLottery(id);
+    if (!found) return { success: false, error: 'Lottery not found' };
+    if (!found.lottery.open) return { success: false, closed: true };
+
+    var sheet = getLotteryEntriesSheet();
+    var key = trainerKey(trainerName);
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][3]) !== id) continue;
+      if (trainerKey(rows[i][1]) === key) {
+        return { success: true, alreadyJoined: true, existingName: String(rows[i][1]) };
+      }
+      if (trackDevice && String(rows[i][2]) === deviceId) {
+        return { success: false, deviceUsed: true, existingName: String(rows[i][1]) };
+      }
+    }
+
+    var redeemedAs = findRedeemerInWindow(found.lottery, key);
+    if (redeemedAs) {
+      return { success: true, alreadyJoined: true, viaRedemption: true, existingName: redeemedAs };
+    }
+
+    sheet.appendRow([new Date().toISOString(), trainerName, deviceId, id]);
+    return { success: true, alreadyJoined: false };
+  });
+}
+
+// "since" holds the admin's local midnight for the check-in date, so the day runs 24h from it.
+function lotteryWindow(lottery) {
+  var since = new Date(lottery.since || 0);
+  var until = new Date(since.getTime() + 24 * 60 * 60 * 1000);
+  if (lottery.closedAt) {
+    var closedAt = new Date(lottery.closedAt);
+    if (closedAt < until) until = closedAt;
+  }
+  return { since: since, until: until };
+}
+
+function findRedeemerInWindow(lottery, key) {
+  var scanSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('ScanLog');
+  if (!scanSheet) return '';
+  var w = lotteryWindow(lottery);
+  var scans = scanSheet.getDataRange().getValues();
+  for (var i = 1; i < scans.length; i++) {
+    var ts = new Date(scans[i][0]);
+    if (isNaN(ts.getTime()) || ts < w.since || ts >= w.until) continue;
+    if (trainerKey(scans[i][2]) === key) return String(scans[i][2]).trim();
+  }
+  return '';
+}
+
+// Entrants = trainers who redeemed a code on the check-in date (before the lottery closed), plus its own sign-ups.
+function getLotteryEntrants(id) {
+  var found = findLottery(id);
+  if (!found) return { error: 'Lottery not found' };
+
+  var w = lotteryWindow(found.lottery);
+  var since = w.since;
+  var until = w.until;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var entrants = {};
+
+  function add(name, flag) {
+    name = String(name || '').trim();
+    var key = trainerKey(name);
+    if (!key) return;
+    if (!entrants[key]) entrants[key] = { trainerName: name, redeemed: false, signedUp: false };
+    entrants[key][flag] = true;
+  }
+
+  var scanSheet = ss.getSheetByName('ScanLog');
+  if (scanSheet) {
+    var scans = scanSheet.getDataRange().getValues();
+    for (var i = 1; i < scans.length; i++) {
+      var ts = new Date(scans[i][0]);
+      if (isNaN(ts.getTime()) || ts < since || ts >= until) continue;
+      add(scans[i][2], 'redeemed');
+    }
+  }
+
+  var entrySheet = ss.getSheetByName('Lottery');
+  if (entrySheet) {
+    var entries = entrySheet.getDataRange().getValues();
+    for (var j = 1; j < entries.length; j++) {
+      if (String(entries[j][3]) === id) add(entries[j][1], 'signedUp');
+    }
+  }
+
+  var list = Object.keys(entrants).map(function(k) { return entrants[k]; });
+  list.sort(function(a, b) { return a.trainerName.toLowerCase() < b.trainerName.toLowerCase() ? -1 : 1; });
+  return { entrants: list };
 }
 
 function getErrors() {

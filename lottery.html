@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Join the Lottery - PoGo Code Dist</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="container redeem-container">
+    <header>
+      <h1>PoGo Code Dist</h1>
+      <p class="subtitle">Event Lottery</p>
+    </header>
+
+    <section id="step-loading" class="card">
+      <div class="spinner"></div>
+    </section>
+
+    <section id="step-unavailable" class="card hidden">
+      <h2 id="unavailable-title">Lottery Not Found</h2>
+      <p id="unavailable-message">This sign-up link isn't valid. Ask an organizer for a new one.</p>
+    </section>
+
+    <section id="step-join" class="card hidden">
+      <h2 id="join-title">Join the Lottery</h2>
+      <p>Enter your Pokemon Go trainer name to be entered.</p>
+      <form id="lottery-form">
+        <div class="form-group">
+          <label for="lottery-trainer">Trainer Name</label>
+          <input type="text" id="lottery-trainer" placeholder="Your trainer name" pattern="\s*[A-Za-z0-9][A-Za-z0-9\s]*" title="Letters and numbers only" autocapitalize="off" autocomplete="off" spellcheck="false" required>
+        </div>
+        <p id="lottery-error" class="login-error hidden"></p>
+        <button type="submit" id="lottery-submit" class="btn btn-primary btn-large">Enter Lottery</button>
+      </form>
+    </section>
+
+    <section id="step-joined" class="card hidden">
+      <h2 id="joined-title">You're In!</h2>
+      <p id="joined-message"></p>
+    </section>
+  </div>
+
+  <script src="js/site-config.js"></script>
+  <script src="js/error-logger.js"></script>
+  <script src="js/lottery.js"></script>
+</body>
+</html>
