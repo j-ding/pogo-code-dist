@@ -595,6 +595,64 @@ header h1 {
   border: 1px solid var(--gold-border);
 }
 
+.lottery-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lottery-meta-row .card-note {
+  margin-top: 0;
+}
+
+#lottery-edit-form {
+  margin-bottom: 4px;
+}
+
+.lottery-entrant .lottery-name {
+  flex: 1;
+  min-width: 120px;
+}
+
+.lottery-entrant-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.lottery-entrant-actions .btn {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+}
+
+.lottery-entrant-edit {
+  border-color: var(--accent);
+}
+
+.lottery-entrant-input {
+  flex: 1;
+  min-width: 140px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.lottery-entrant-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.lottery-list.is-busy .lottery-entrant-actions {
+  visibility: hidden;
+}
+
 .lottery-history {
   display: flex;
   flex-direction: column;

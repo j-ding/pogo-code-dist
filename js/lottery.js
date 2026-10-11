@@ -94,6 +94,10 @@ document.getElementById('lottery-form').addEventListener('submit', async (e) => 
       showUnavailable('Lottery Closed', `"${lotteryName}" is no longer accepting entries.`);
       return;
     }
+    if (data.removed) {
+      showUnavailable("Can't Enter", `This trainer can't enter ${lotteryName}. Please talk to an organizer.`);
+      return;
+    }
     if (data.deviceUsed) {
       showUnavailable('Already Entered', `This phone already entered ${lotteryName} as ${data.existingName}. Each phone can enter once.`);
       return;

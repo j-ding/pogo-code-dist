@@ -100,7 +100,7 @@ function escapeHtml(value) {
 }
 
 // Lottery
-const lotteryState = { lotteries: [], selectedId: null, entrants: [], drawing: false };
+const lotteryState = { lotteries: [], selectedId: null, entrants: [], drawing: false, editingKey: null };
 
 function getLotteryUrl(id) {
   return `${getBaseUrl()}/lottery.html?id=${encodeURIComponent(id)}`;
@@ -200,9 +200,11 @@ function selectLottery(id) {
   const lottery = lotteryState.lotteries.find(l => l.id === id);
   if (!lottery) return;
 
+  if (lotteryState.selectedId !== id) lotteryState.editingKey = null;
   lotteryState.selectedId = id;
   try { localStorage.setItem('pogo_lottery_selected', id); } catch {}
 
+  showLotteryEditForm(false);
   document.getElementById('lottery-detail').classList.remove('hidden');
   renderLotteryHeader(lottery);
   renderLotteryHistory();
@@ -252,19 +254,118 @@ function renderLotteryEntrants() {
   }
 
   list.innerHTML = entrants.map(e => {
+    const key = trainerKey(e.trainerName);
+    const winner = isWinner(lottery, e.trainerName);
+
+    if (lotteryState.editingKey === key) {
+      return `
+        <form class="lottery-entrant lottery-entrant-edit" data-key="${escapeHtml(key)}" data-name="${escapeHtml(e.trainerName)}">
+          <input type="text" class="lottery-entrant-input" value="${escapeHtml(e.trainerName)}" aria-label="Trainer name" required>
+          <span class="lottery-entrant-actions">
+            <button type="submit" class="btn btn-small btn-primary">Save</button>
+            <button type="button" class="btn btn-small btn-secondary" data-action="cancel-edit">Cancel</button>
+          </span>
+        </form>
+      `;
+    }
+
     const badges = [
-      isWinner(lottery, e.trainerName) ? '<span class="badge badge-winner">Winner</span>' : '',
+      winner ? '<span class="badge badge-winner">Winner</span>' : '',
       e.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : '',
       e.signedUp ? '<span class="badge badge-new">Lottery sign-up</span>' : '',
     ].join(' ');
     return `
-      <div class="lottery-entrant${isWinner(lottery, e.trainerName) ? ' is-winner' : ''}" data-key="${escapeHtml(trainerKey(e.trainerName))}">
+      <div class="lottery-entrant${winner ? ' is-winner' : ''}" data-key="${escapeHtml(key)}" data-name="${escapeHtml(e.trainerName)}">
         <span class="lottery-name">${escapeHtml(e.trainerName)}</span>
         <span class="lottery-badges">${badges}</span>
+        <span class="lottery-entrant-actions">
+          ${winner ? '<button type="button" class="btn btn-small btn-secondary" data-action="unwin">Undo Win</button>' : ''}
+          <button type="button" class="btn btn-small btn-secondary" data-action="edit">Edit</button>
+          <button type="button" class="btn btn-small btn-danger" data-action="remove">Remove</button>
+        </span>
       </div>
     `;
   }).join('');
+
+  const input = list.querySelector('.lottery-entrant-input');
+  if (input) { input.focus(); input.select(); }
 }
+
+function applyLotteryUpdate(data) {
+  const lottery = selectedLottery();
+  if (data.lottery) Object.assign(lottery, data.lottery);
+  if (data.entrants) lotteryState.entrants = data.entrants;
+  renderLotteryHeader(lottery);
+  renderLotteryHistory();
+  renderLotteryEntrants();
+}
+
+async function handleEntrantAction(action, row) {
+  const lottery = selectedLottery();
+  if (!lottery || lotteryState.drawing) return;
+  const name = row.dataset.name;
+
+  if (action === 'edit') {
+    lotteryState.editingKey = row.dataset.key;
+    renderLotteryEntrants();
+    return;
+  }
+  if (action === 'cancel-edit') {
+    lotteryState.editingKey = null;
+    renderLotteryEntrants();
+    return;
+  }
+
+  try {
+    if (action === 'remove') {
+      if (!confirm(`Remove ${name} from "${lottery.name}"? They won't be able to sign up for it again.`)) return;
+      applyLotteryUpdate(await callSheet({ action: 'removeEntrant', id: lottery.id, trainerName: name }));
+      showToast(`${name} removed`);
+    } else if (action === 'unwin') {
+      if (!confirm(`Undo ${name}'s win? They'll go back into the draw.`)) return;
+      applyLotteryUpdate(await callSheet({ action: 'unmarkWinner', id: lottery.id, trainerName: name }));
+      showToast(`${name} is no longer a winner`);
+    }
+  } catch (err) {
+    showToast('Could not update entrant: ' + err.message);
+  }
+}
+
+document.getElementById('lottery-list').addEventListener('click', (e) => {
+  const button = e.target.closest('button[data-action]');
+  if (!button) return;
+  handleEntrantAction(button.dataset.action, button.closest('.lottery-entrant'));
+});
+
+document.getElementById('lottery-list').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target.closest('.lottery-entrant-edit');
+  const lottery = selectedLottery();
+  if (!form || !lottery) return;
+
+  const oldName = form.dataset.name;
+  const newName = form.querySelector('.lottery-entrant-input').value.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9]+$/.test(newName)) {
+    showToast('Trainer names are letters and numbers only');
+    return;
+  }
+  if (newName === oldName) {
+    lotteryState.editingKey = null;
+    renderLotteryEntrants();
+    return;
+  }
+
+  form.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  try {
+    const data = await callSheet({ action: 'renameEntrant', id: lottery.id, oldName, newName });
+    lotteryState.editingKey = null;
+    applyLotteryUpdate(data);
+    showToast(`Renamed to ${newName}`);
+  } catch (err) {
+    form.querySelectorAll('button').forEach(b => { b.disabled = false; });
+    showToast('Could not rename: ' + err.message);
+  }
+});
 
 function randomIndex(n) {
   const buf = new Uint32Array(1);
@@ -273,15 +374,20 @@ function randomIndex(n) {
 }
 
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-refresh', 'lottery-toggle'].forEach(id => {
+  ['lottery-draw', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
+  document.getElementById('lottery-list').classList.toggle('is-busy', disabled);
 }
 
 async function drawLotteryWinner() {
   const lottery = selectedLottery();
   if (!lottery || lotteryState.drawing) return;
 
+  if (lotteryState.editingKey) {
+    lotteryState.editingKey = null;
+    renderLotteryEntrants();
+  }
   const pool = lotteryState.entrants.filter(e => !isWinner(lottery, e.trainerName));
   if (pool.length === 0) {
     showToast(lotteryState.entrants.length ? 'Everyone has already won' : 'No entrants to draw from');
@@ -362,6 +468,68 @@ document.getElementById('lottery-toggle').addEventListener('click', async () => 
     showToast(lottery.open ? 'Lottery reopened' : 'Lottery closed');
   } catch (err) {
     showToast('Could not update lottery: ' + err.message);
+  }
+});
+
+function toDateInputValue(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return todayInputValue();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function showLotteryEditForm(show) {
+  document.getElementById('lottery-view-header').classList.toggle('hidden', show);
+  document.getElementById('lottery-edit-form').classList.toggle('hidden', !show);
+  if (!show) return;
+  const lottery = selectedLottery();
+  document.getElementById('lottery-edit-name').value = lottery.name;
+  document.getElementById('lottery-edit-since').value = toDateInputValue(lottery.since);
+  document.getElementById('lottery-edit-name').focus();
+}
+
+document.getElementById('lottery-edit').addEventListener('click', () => showLotteryEditForm(true));
+document.getElementById('lottery-edit-cancel').addEventListener('click', () => showLotteryEditForm(false));
+
+document.getElementById('lottery-edit-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const lottery = selectedLottery();
+  const name = document.getElementById('lottery-edit-name').value.trim();
+  const sinceValue = document.getElementById('lottery-edit-since').value;
+  if (!lottery || !name || !sinceValue) return;
+
+  const [y, m, d] = sinceValue.split('-').map(Number);
+  const since = new Date(y, m - 1, d).toISOString();
+  const button = e.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+
+  try {
+    const data = await callSheet({ action: 'updateLottery', id: lottery.id, name, since });
+    Object.assign(lottery, data.lottery);
+    showLotteryEditForm(false);
+    renderLotteryHeader(lottery);
+    renderLotteryHistory();
+    loadLotteryEntrants();
+    showToast('Lottery updated');
+  } catch (err) {
+    showToast('Could not update lottery: ' + err.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('lottery-delete').addEventListener('click', async () => {
+  const lottery = selectedLottery();
+  if (!lottery) return;
+  if (!confirm(`Delete "${lottery.name}"? Its sign-ups, winners, and edits will be permanently removed. Code redemptions in the scan log are not affected.`)) return;
+
+  try {
+    await callSheet({ action: 'deleteLottery', id: lottery.id });
+    lotteryState.selectedId = null;
+    try { localStorage.removeItem('pogo_lottery_selected'); } catch {}
+    await loadLotteries();
+    showToast('Lottery deleted');
+  } catch (err) {
+    showToast('Could not delete lottery: ' + err.message);
   }
 });
 
@@ -711,7 +879,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 7;
+const REQUIRED_SCRIPT_VERSION = 8;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);

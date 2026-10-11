@@ -11,7 +11,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 7;
+var SCRIPT_VERSION = 8;
 
 function jsonOut(obj) {
   return ContentService
@@ -57,6 +57,26 @@ function doGet(e) {
 
   if (action === 'recordWinner') {
     return jsonOut(recordWinner(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'updateLottery') {
+    return jsonOut(updateLottery(p.id || '', p.name || '', p.since || ''));
+  }
+
+  if (action === 'deleteLottery') {
+    return jsonOut(deleteLottery(p.id || ''));
+  }
+
+  if (action === 'renameEntrant') {
+    return jsonOut(renameEntrant(p.id || '', p.oldName || '', p.newName || ''));
+  }
+
+  if (action === 'removeEntrant') {
+    return jsonOut(removeEntrant(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'unmarkWinner') {
+    return jsonOut(unmarkWinner(p.id || '', p.trainerName || ''));
   }
 
   if (action === 'joinLottery') {
@@ -488,15 +508,31 @@ function withLock(fn) {
   }
 }
 
-// Lotteries tab: Id | Name | Created At | Since | Closed At | Winners (JSON array)
+// Lotteries tab: Id | Name | Created At | Since | Closed At | Winners (JSON array) | Overrides (JSON)
+// Overrides = { excluded: [trainerKey], renames: { originalTrainerKey: displayName } } so admin edits
+// apply to code redeemers too without touching the ScanLog.
 function getLotteriesSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Lotteries');
   if (!sheet) {
     sheet = ss.insertSheet('Lotteries');
-    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners']);
+    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners', 'Overrides']);
+  } else if (sheet.getLastColumn() < 7) {
+    sheet.getRange(1, 7).setValue('Overrides');
   }
   return sheet;
+}
+
+function parseOverrides(value) {
+  var o = {};
+  try { o = JSON.parse(value || '{}') || {}; } catch (err) {}
+  return { excluded: o.excluded || [], renames: o.renames || {} };
+}
+
+function saveLotteryFields(found) {
+  var sheet = getLotteriesSheet();
+  sheet.getRange(found.row, 6).setValue(JSON.stringify(found.lottery.winners));
+  sheet.getRange(found.row, 7).setValue(JSON.stringify(found.overrides));
 }
 
 // Lottery tab: Timestamp | Trainer Name | Device ID | Lottery ID
@@ -522,6 +558,7 @@ function readLotteries() {
     var closedAt = toIso(rows[i][4]);
     list.push({
       row: i + 1,
+      overrides: parseOverrides(rows[i][6]),
       lottery: {
         id: String(rows[i][0]),
         name: String(rows[i][1]),
@@ -554,7 +591,7 @@ function createLottery(name, since) {
   return withLock(function() {
     var id = Utilities.getUuid().split('-')[0];
     var now = new Date().toISOString();
-    getLotteriesSheet().appendRow([id, name, now, sinceIso, '', '[]']);
+    getLotteriesSheet().appendRow([id, name, now, sinceIso, '', '[]', '{}']);
     return {
       success: true,
       lottery: { id: id, name: name, createdAt: now, since: sinceIso, closedAt: '', open: true, winners: [] }
@@ -589,6 +626,108 @@ function recordWinner(id, trainerName) {
   });
 }
 
+function updateLottery(id, name, since) {
+  name = String(name).trim().slice(0, 60);
+  if (!name) return { error: 'Lottery name is required' };
+  var sinceIso = toIso(since);
+  if (!sinceIso) return { error: 'Check-in date is required' };
+
+  return withLock(function() {
+    var found = findLottery(id);
+    if (!found) return { error: 'Lottery not found' };
+    var sheet = getLotteriesSheet();
+    sheet.getRange(found.row, 2).setValue(name);
+    sheet.getRange(found.row, 4).setValue(sinceIso);
+    found.lottery.name = name;
+    found.lottery.since = sinceIso;
+    return { success: true, lottery: found.lottery };
+  });
+}
+
+function deleteLottery(id) {
+  return withLock(function() {
+    var found = findLottery(id);
+    if (!found) return { error: 'Lottery not found' };
+    getLotteriesSheet().deleteRow(found.row);
+
+    var entrySheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Lottery');
+    var removed = 0;
+    if (entrySheet) {
+      var rows = entrySheet.getDataRange().getValues();
+      for (var i = rows.length - 1; i >= 1; i--) {
+        if (String(rows[i][3]) === id) {
+          entrySheet.deleteRow(i + 1);
+          removed++;
+        }
+      }
+    }
+    return { success: true, removedEntries: removed };
+  });
+}
+
+function entrantMutation(id, fn) {
+  return withLock(function() {
+    var found = findLottery(id);
+    if (!found) return { error: 'Lottery not found' };
+    var err = fn(found);
+    if (err) return { error: err };
+    saveLotteryFields(found);
+    return { success: true, lottery: found.lottery, entrants: buildEntrants(found) };
+  });
+}
+
+function withoutKey(winners, key) {
+  return winners.filter(function(w) { return trainerKey(w) !== key; });
+}
+
+function renameEntrant(id, oldName, newName) {
+  newName = String(newName).replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9]+$/.test(newName)) return { error: 'Trainer names are letters and numbers only' };
+  var oldKey = trainerKey(oldName);
+  var newKey = trainerKey(newName);
+  if (!oldKey) return { error: 'Trainer name is required' };
+
+  return entrantMutation(id, function(found) {
+    var renames = found.overrides.renames;
+    // Re-point earlier renames that landed on the old name, then map the old name itself.
+    Object.keys(renames).forEach(function(k) {
+      if (trainerKey(renames[k]) === oldKey) renames[k] = newName;
+    });
+    renames[oldKey] = newName;
+    found.overrides.excluded = found.overrides.excluded.filter(function(k) { return k !== newKey; });
+
+    var winners = found.lottery.winners;
+    if (winners.some(function(w) { return trainerKey(w) === oldKey; })) {
+      winners = withoutKey(withoutKey(winners, oldKey), newKey);
+      winners.push(newName);
+      found.lottery.winners = winners;
+    }
+  });
+}
+
+function removeEntrant(id, trainerName) {
+  var key = trainerKey(trainerName);
+  if (!key) return { error: 'Trainer name is required' };
+  return entrantMutation(id, function(found) {
+    if (found.overrides.excluded.indexOf(key) === -1) found.overrides.excluded.push(key);
+    found.lottery.winners = withoutKey(found.lottery.winners, key);
+  });
+}
+
+function unmarkWinner(id, trainerName) {
+  var key = trainerKey(trainerName);
+  if (!key) return { error: 'Trainer name is required' };
+  return entrantMutation(id, function(found) {
+    found.lottery.winners = withoutKey(found.lottery.winners, key);
+  });
+}
+
+function resolveEntrantName(overrides, rawName) {
+  var name = String(rawName || '').trim();
+  var renamed = overrides.renames[trainerKey(name)];
+  return renamed || name;
+}
+
 // Pokemon Go trainer names are letters and numbers only, so spacing/case differences are the same trainer.
 function trainerKey(name) {
   return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -609,6 +748,9 @@ function joinLottery(id, trainerName, deviceId) {
 
     var sheet = getLotteryEntriesSheet();
     var key = trainerKey(trainerName);
+    if (found.overrides.excluded.indexOf(trainerKey(resolveEntrantName(found.overrides, trainerName))) !== -1) {
+      return { success: false, removed: true };
+    }
     var rows = sheet.getDataRange().getValues();
     for (var i = 1; i < rows.length; i++) {
       if (String(rows[i][3]) !== id) continue;
@@ -654,21 +796,27 @@ function findRedeemerInWindow(lottery, key) {
   return '';
 }
 
-// Entrants = trainers who redeemed a code on the check-in date (before the lottery closed), plus its own sign-ups.
 function getLotteryEntrants(id) {
   var found = findLottery(id);
   if (!found) return { error: 'Lottery not found' };
+  return { entrants: buildEntrants(found) };
+}
 
+// Entrants = trainers who redeemed a code on the check-in date (before the lottery closed), plus its own
+// sign-ups, after applying the lottery's admin renames and removals.
+function buildEntrants(found) {
+  var id = found.lottery.id;
+  var overrides = found.overrides;
   var w = lotteryWindow(found.lottery);
   var since = w.since;
   var until = w.until;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var entrants = {};
 
-  function add(name, flag) {
-    name = String(name || '').trim();
+  function add(rawName, flag) {
+    var name = resolveEntrantName(overrides, rawName);
     var key = trainerKey(name);
-    if (!key) return;
+    if (!key || overrides.excluded.indexOf(key) !== -1) return;
     if (!entrants[key]) entrants[key] = { trainerName: name, redeemed: false, signedUp: false };
     entrants[key][flag] = true;
   }
@@ -693,7 +841,7 @@ function getLotteryEntrants(id) {
 
   var list = Object.keys(entrants).map(function(k) { return entrants[k]; });
   list.sort(function(a, b) { return a.trainerName.toLowerCase() < b.trainerName.toLowerCase() ? -1 : 1; });
-  return { entrants: list };
+  return list;
 }
 
 function getErrors() {

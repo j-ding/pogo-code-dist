@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="1.5.4">
+  <meta name="app-version" content="1.6.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=1.5.4">
+  <link rel="stylesheet" href="css/style.css?v=1.6.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -163,11 +163,34 @@
         </div>
 
         <div id="lottery-detail" class="card hidden">
-          <div class="codes-header">
-            <h2 id="lottery-title"></h2>
-            <span id="lottery-status" class="badge"></span>
+          <div id="lottery-view-header">
+            <div class="codes-header">
+              <h2 id="lottery-title"></h2>
+              <span id="lottery-status" class="badge"></span>
+            </div>
+            <div class="lottery-meta-row">
+              <p id="lottery-meta" class="card-note"></p>
+              <div class="lottery-toolbar-actions">
+                <button id="lottery-edit" class="btn btn-small btn-secondary">Edit</button>
+                <button id="lottery-delete" class="btn btn-small btn-danger">Delete</button>
+              </div>
+            </div>
           </div>
-          <p id="lottery-meta" class="card-note"></p>
+
+          <form id="lottery-edit-form" class="lottery-create hidden">
+            <div class="form-group">
+              <label for="lottery-edit-name">Name</label>
+              <input type="text" id="lottery-edit-name" maxlength="60" required>
+            </div>
+            <div class="form-group">
+              <label for="lottery-edit-since">Check-in date</label>
+              <input type="date" id="lottery-edit-since" required>
+            </div>
+            <div class="lottery-toolbar-actions">
+              <button type="submit" class="btn btn-small btn-primary">Save</button>
+              <button type="button" id="lottery-edit-cancel" class="btn btn-small btn-secondary">Cancel</button>
+            </div>
+          </form>
 
           <div id="lottery-signup" class="lottery-signup">
             <div id="lottery-qr"></div>
@@ -254,13 +277,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v1.5.4</span>
+      <span>v1.6.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=1.5.4"></script>
-  <script src="js/error-logger.js?v=1.5.4"></script>
-  <script src="js/auth.js?v=1.5.4"></script>
-  <script src="js/app.js?v=1.5.4"></script>
+  <script src="js/site-config.js?v=1.6.0"></script>
+  <script src="js/error-logger.js?v=1.6.0"></script>
+  <script src="js/auth.js?v=1.6.0"></script>
+  <script src="js/app.js?v=1.6.0"></script>
 </body>
 </html>
