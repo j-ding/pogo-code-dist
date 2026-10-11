@@ -83,6 +83,16 @@ document.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
+// Date-only strings come from the date picker; the sheet returns full timestamps for the same dates.
+function formatExpiry(value) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [y, m, d] = value.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString();
+  }
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
+}
+
 function escapeHtml(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -585,7 +595,7 @@ function renderCodesList() {
 
       const meta = [
         entry.label,
-        entry.expiry ? `Expires: ${entry.expiry}` : null,
+        entry.expiry ? `Expires: ${formatExpiry(entry.expiry)}` : null,
         `Added: ${new Date(entry.addedAt).toLocaleDateString()}`,
       ].filter(Boolean).join(' · ');
 
@@ -615,7 +625,7 @@ function renderCodesList() {
     inactiveList.innerHTML = inactiveCodes.map(entry => {
       const meta = [
         entry.label,
-        entry.expiry ? `Expired: ${entry.expiry}` : null,
+        entry.expiry ? `Expires: ${formatExpiry(entry.expiry)}` : null,
         `Added: ${new Date(entry.addedAt).toLocaleDateString()}`,
       ].filter(Boolean).join(' · ');
 
