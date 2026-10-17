@@ -559,6 +559,10 @@ header h1 {
   gap: 16px;
 }
 
+.settings-community {
+  margin-bottom: 16px;
+}
+
 .community-card {
   display: flex;
   flex-direction: column;

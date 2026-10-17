@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.0.1">
+  <meta name="app-version" content="2.0.2">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.0.1">
+  <link rel="stylesheet" href="css/style.css?v=2.0.2">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -53,11 +53,9 @@
       <button class="tab active" data-tab="add-code">Add Code</button>
       <button class="tab" data-tab="active-codes">Active Codes</button>
       <button class="tab" data-tab="display">Display</button>
-      <button class="tab" data-tab="scan-log">Scan Log</button>
       <button class="tab" data-tab="checkin">Check In</button>
       <button class="tab" data-tab="lottery">Lottery</button>
       <button class="tab" data-tab="trainers">Trainers</button>
-      <button class="tab" data-tab="community">Community</button>
       <button class="tab" data-tab="settings">Settings</button>
     </nav>
 
@@ -319,9 +317,22 @@
         </div>
       </section>
 
-      <!-- Community Tab -->
-      <section id="community" class="tab-content">
-        <div class="community-grid">
+      <!-- Settings Tab (also holds the scan log and community QR codes) -->
+      <section id="settings" class="tab-content">
+        <div class="card">
+          <h2>Scan Log</h2>
+          <div class="log-controls">
+            <button id="refresh-log" class="btn btn-secondary">Refresh Log</button>
+            <select id="log-filter">
+              <option value="all">All Codes</option>
+            </select>
+          </div>
+          <div id="log-table-container">
+            <p class="empty-state">No scans recorded yet.</p>
+          </div>
+        </div>
+
+        <div id="community-links" class="community-grid settings-community">
           <div class="card community-card" data-link="discord">
             <h2>Join our Discord</h2>
             <div class="community-qr" id="community-qr-discord"></div>
@@ -339,26 +350,7 @@
             </div>
           </div>
         </div>
-      </section>
 
-      <!-- Scan Log Tab -->
-      <section id="scan-log" class="tab-content">
-        <div class="card">
-          <h2>Scan Log</h2>
-          <div class="log-controls">
-            <button id="refresh-log" class="btn btn-secondary">Refresh Log</button>
-            <select id="log-filter">
-              <option value="all">All Codes</option>
-            </select>
-          </div>
-          <div id="log-table-container">
-            <p class="empty-state">No scans recorded yet.</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- Settings Tab -->
-      <section id="settings" class="tab-content">
         <div class="card">
           <h2>Settings</h2>
           <form id="settings-form">
@@ -395,19 +387,20 @@
             <li>Replace the code with the script from <code>google-apps-script.js</code></li>
             <li>Click <strong>Deploy &gt; New deployment</strong></li>
             <li>Select <strong>Web app</strong>, set access to <strong>"Anyone"</strong></li>
-            <li>Copy the deployment URL and paste it above</li>
+            <li>Copy the deployment URL into <code>js/site-config.js</code></li>
+            <li>In <strong>Project Settings &gt; Script properties</strong>, add <code>ADMIN_USERNAME</code> and <code>ADMIN_PASSWORD</code></li>
           </ol>
         </div>
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.0.1</span>
+      <span>v2.0.2</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.0.1"></script>
-  <script src="js/error-logger.js?v=2.0.1"></script>
-  <script src="js/auth.js?v=2.0.1"></script>
-  <script src="js/app.js?v=2.0.1"></script>
+  <script src="js/site-config.js?v=2.0.2"></script>
+  <script src="js/error-logger.js?v=2.0.2"></script>
+  <script src="js/auth.js?v=2.0.2"></script>
+  <script src="js/app.js?v=2.0.2"></script>
 </body>
 </html>

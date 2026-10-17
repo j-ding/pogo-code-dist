@@ -80,10 +80,12 @@ function activateTab(name) {
 
   if (name === 'active-codes') renderCodesList();
   if (name === 'display') initDisplay();
-  if (name === 'scan-log') loadScanLog();
+  if (name === 'settings') {
+    loadScanLog();
+    initCommunity();
+  }
   if (name === 'checkin') initCheckIn();
   if (name === 'lottery') initLottery();
-  if (name === 'community') initCommunity();
   if (name === 'trainers') loadTrainers();
 }
 
@@ -170,7 +172,7 @@ function initCommunity() {
   });
 }
 
-document.getElementById('community').addEventListener('click', (e) => {
+document.getElementById('community-links').addEventListener('click', (e) => {
   const button = e.target.closest('[data-community-action]');
   if (!button) return;
   const key = button.closest('.community-card').dataset.link;
@@ -1795,5 +1797,7 @@ function onAdminReady() {
   syncAndRender(true);
   let saved = null;
   try { saved = localStorage.getItem('pogo_active_tab'); } catch {}
-  activateTab(saved && document.getElementById(saved) ? saved : 'add-code');
+  // Scan Log and Community used to be their own tabs; they now live under Settings.
+  if (saved === 'scan-log' || saved === 'community') saved = 'settings';
+  activateTab(saved && document.querySelector(`.tab[data-tab="${saved}"]`) ? saved : 'add-code');
 }
