@@ -11,7 +11,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 10;
+var SCRIPT_VERSION = 11;
 
 function jsonOut(obj) {
   return ContentService
@@ -38,8 +38,42 @@ function doGet(e) {
 
   var p = e.parameter;
 
+  if (action === 'getEvents') {
+    return jsonOut({ events: getEventsWithCounts() });
+  }
+
+  if (action === 'getEvent') {
+    var foundEvent = findEvent(p.id || '');
+    return jsonOut({ event: foundEvent ? { name: foundEvent.event.name, open: foundEvent.event.open } : null });
+  }
+
+  if (action === 'createEvent') {
+    return jsonOut(createEvent(p.name || '', p.date || ''));
+  }
+
+  if (action === 'setEventStatus') {
+    return jsonOut(setEventStatus(p.id || '', p.open === 'true'));
+  }
+
+  if (action === 'deleteEvent') {
+    return jsonOut(deleteEvent(p.id || ''));
+  }
+
+  if (action === 'getEventAttendees') {
+    if (!findEvent(p.id || '')) return jsonOut({ error: 'Event not found' });
+    return jsonOut({ attendees: eventAttendees(p.id) });
+  }
+
+  if (action === 'removeAttendee') {
+    return jsonOut(removeAttendee(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'checkIn') {
+    return jsonOut(checkIn(p.id || '', p.trainerName || '', p.deviceId || ''));
+  }
+
   if (action === 'createLottery') {
-    return jsonOut(createLottery(p.name || '', p.since || ''));
+    return jsonOut(createLottery(p.name || '', p.eventId || ''));
   }
 
   if (action === 'getLotteries') {
@@ -64,7 +98,7 @@ function doGet(e) {
   }
 
   if (action === 'updateLottery') {
-    return jsonOut(updateLottery(p.id || '', p.name || '', p.since || ''));
+    return jsonOut(updateLottery(p.id || '', p.name || '', p.eventId || ''));
   }
 
   if (action === 'deleteLottery') {
@@ -77,6 +111,14 @@ function doGet(e) {
 
   if (action === 'removeEntrant') {
     return jsonOut(removeEntrant(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'skipWinner') {
+    return jsonOut(skipWinner(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'unskipEntrant') {
+    return jsonOut(unskipEntrant(p.id || '', p.trainerName || ''));
   }
 
   if (action === 'unmarkWinner') {
@@ -208,6 +250,9 @@ function logScan(data) {
 
   if (data.code) {
     deactivateCodeAfterRedeem(data.code);
+  }
+  if (data.trainerName) {
+    addRedeemerToOpenEvents(data.trainerName, data.timestamp || new Date().toISOString(), data.deviceId || '');
   }
 
   return ContentService
@@ -512,17 +557,277 @@ function withLock(fn) {
   }
 }
 
-// Lotteries tab: Id | Name | Created At | Since | Closed At | Winners (JSON array) | Overrides (JSON) | Winner Count
+// ---------- Events & check-ins ----------
+
+// Events tab: Id | Name | Date | Created At | Closed At
+function getEventsSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Events');
+  if (!sheet) {
+    sheet = ss.insertSheet('Events');
+    sheet.appendRow(['Id', 'Name', 'Date', 'Created At', 'Closed At']);
+  }
+  return sheet;
+}
+
+// CheckIns tab: Timestamp | Event ID | Trainer Name | Device ID | Source (qr / redeem)
+function getCheckInsSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CheckIns');
+  if (!sheet) {
+    sheet = ss.insertSheet('CheckIns');
+    sheet.appendRow(['Timestamp', 'Event ID', 'Trainer Name', 'Device ID', 'Source']);
+  }
+  return sheet;
+}
+
+function readEvents() {
+  var rows = getEventsSheet().getDataRange().getValues();
+  var list = [];
+  for (var i = 1; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    var closedAt = toIso(rows[i][4]);
+    list.push({
+      row: i + 1,
+      event: {
+        id: String(rows[i][0]),
+        name: String(rows[i][1]),
+        date: toIso(rows[i][2]),
+        createdAt: toIso(rows[i][3]),
+        closedAt: closedAt,
+        open: !closedAt
+      }
+    });
+  }
+  list.sort(function(a, b) {
+    if (a.event.date !== b.event.date) return a.event.date < b.event.date ? 1 : -1;
+    return a.event.createdAt < b.event.createdAt ? 1 : -1;
+  });
+  return list;
+}
+
+function findEvent(id) {
+  if (!id) return null;
+  var all = readEvents();
+  for (var i = 0; i < all.length; i++) {
+    if (all[i].event.id === id) return all[i];
+  }
+  return null;
+}
+
+// "date" holds the admin's local midnight, so the event day runs 24h from it (or until check-in closed).
+function eventWindow(ev) {
+  var since = new Date(ev.date || 0);
+  var until = new Date(since.getTime() + 24 * 60 * 60 * 1000);
+  if (ev.closedAt) {
+    var closedAt = new Date(ev.closedAt);
+    if (closedAt < until) until = closedAt;
+  }
+  return { since: since, until: until };
+}
+
+function checkInRows() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CheckIns');
+  return sheet ? sheet.getDataRange().getValues().slice(1) : [];
+}
+
+function eventAttendees(id, rows) {
+  rows = rows || checkInRows();
+  var byKey = {};
+  var order = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][1]) !== id) continue;
+    var name = String(rows[i][2] || '').trim();
+    var key = trainerKey(name);
+    if (!key) continue;
+    if (!byKey[key]) {
+      byKey[key] = { trainerName: name, redeemed: false, checkedIn: false, firstSeen: toIso(rows[i][0]) };
+      order.push(key);
+    }
+    if (String(rows[i][4]) === 'redeem') byKey[key].redeemed = true;
+    else byKey[key].checkedIn = true;
+  }
+  var list = order.map(function(k) { return byKey[k]; });
+  list.sort(function(a, b) { return a.trainerName.toLowerCase() < b.trainerName.toLowerCase() ? -1 : 1; });
+  return list;
+}
+
+function getEventsWithCounts() {
+  var rows = checkInRows();
+  var keysByEvent = {};
+  rows.forEach(function(r) {
+    var id = String(r[1]);
+    var key = trainerKey(r[2]);
+    if (!key) return;
+    keysByEvent[id] = keysByEvent[id] || {};
+    keysByEvent[id][key] = true;
+  });
+  return readEvents().map(function(r) {
+    r.event.attendeeCount = Object.keys(keysByEvent[r.event.id] || {}).length;
+    return r.event;
+  });
+}
+
+function createEvent(name, date) {
+  name = String(name).trim().slice(0, 60);
+  if (!name) return { error: 'Event name is required' };
+  var dateIso = toIso(date);
+  if (!dateIso) return { error: 'Event date is required' };
+
+  return withLock(function() {
+    var id = Utilities.getUuid().split('-')[0];
+    var now = new Date().toISOString();
+    getEventsSheet().appendRow([id, name, dateIso, now, '']);
+    var ev = { id: id, name: name, date: dateIso, createdAt: now, closedAt: '', open: true };
+
+    // Anyone who already redeemed a code on the event's date counts as checked in.
+    var backfilled = 0;
+    var scanSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('ScanLog');
+    if (scanSheet) {
+      var w = eventWindow(ev);
+      var seen = {};
+      var newRows = [];
+      var scans = scanSheet.getDataRange().getValues();
+      for (var i = 1; i < scans.length; i++) {
+        var ts = new Date(scans[i][0]);
+        var key = trainerKey(scans[i][2]);
+        if (!key || seen[key] || isNaN(ts.getTime()) || ts < w.since || ts >= w.until) continue;
+        seen[key] = true;
+        newRows.push([ts.toISOString(), id, String(scans[i][2]).trim(), String(scans[i][12] || ''), 'redeem']);
+      }
+      if (newRows.length) {
+        var sheet = getCheckInsSheet();
+        sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 5).setValues(newRows);
+        backfilled = newRows.length;
+      }
+    }
+    ev.attendeeCount = backfilled;
+    return { success: true, event: ev, backfilled: backfilled };
+  });
+}
+
+function setEventStatus(id, open) {
+  return withLock(function() {
+    var found = findEvent(id);
+    if (!found) return { error: 'Event not found' };
+    var closedAt = open ? '' : new Date().toISOString();
+    getEventsSheet().getRange(found.row, 5).setValue(closedAt);
+    found.event.closedAt = closedAt;
+    found.event.open = open;
+    return { success: true, event: found.event };
+  });
+}
+
+function deleteRowsWhere(sheet, predicate) {
+  if (!sheet) return 0;
+  var rows = sheet.getDataRange().getValues();
+  var removed = 0;
+  for (var i = rows.length - 1; i >= 1; i--) {
+    if (predicate(rows[i])) {
+      sheet.deleteRow(i + 1);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+function deleteEvent(id) {
+  return withLock(function() {
+    var found = findEvent(id);
+    if (!found) return { error: 'Event not found' };
+    var usedBy = readLotteries().filter(function(r) { return r.lottery.eventId === id; });
+    if (usedBy.length) {
+      return { error: 'Lottery "' + usedBy[0].lottery.name + '" uses this event. Delete it or switch it to another event first.' };
+    }
+    getEventsSheet().deleteRow(found.row);
+    var removed = deleteRowsWhere(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CheckIns'), function(r) {
+      return String(r[1]) === id;
+    });
+    return { success: true, removedCheckIns: removed };
+  });
+}
+
+function removeAttendee(id, trainerName) {
+  var key = trainerKey(trainerName);
+  if (!key) return { error: 'Trainer name is required' };
+  return withLock(function() {
+    if (!findEvent(id)) return { error: 'Event not found' };
+    deleteRowsWhere(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CheckIns'), function(r) {
+      return String(r[1]) === id && trainerKey(r[2]) === key;
+    });
+    return { success: true, attendees: eventAttendees(id) };
+  });
+}
+
+function checkIn(id, trainerName, deviceId) {
+  trainerName = String(trainerName).replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9]+$/.test(trainerName)) {
+    return { success: false, error: 'Trainer names are letters and numbers only' };
+  }
+  deviceId = String(deviceId || '');
+  var trackDevice = deviceId && deviceId !== 'dev-unknown';
+
+  return withLock(function() {
+    var found = findEvent(id);
+    if (!found) return { success: false, error: 'Event not found' };
+    if (!found.event.open) return { success: false, closed: true };
+
+    var key = trainerKey(trainerName);
+    var rows = checkInRows();
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][1]) !== id) continue;
+      if (trainerKey(rows[i][2]) === key) {
+        return { success: true, alreadyCheckedIn: true, viaRedemption: String(rows[i][4]) === 'redeem', existingName: String(rows[i][2]) };
+      }
+    }
+    // Only QR check-ins count toward the one-per-phone limit, so a phone used to redeem a code for
+    // someone else can still check its owner in.
+    for (var j = 0; j < rows.length; j++) {
+      if (String(rows[j][1]) === id && trackDevice && String(rows[j][3]) === deviceId && String(rows[j][4]) !== 'redeem') {
+        return { success: false, deviceUsed: true, existingName: String(rows[j][2]) };
+      }
+    }
+
+    getCheckInsSheet().appendRow([new Date().toISOString(), id, trainerName, deviceId, 'qr']);
+    return { success: true, alreadyCheckedIn: false };
+  });
+}
+
+function addRedeemerToOpenEvents(trainerName, timestamp, deviceId) {
+  var key = trainerKey(trainerName);
+  var ts = new Date(timestamp);
+  if (!key || isNaN(ts.getTime())) return;
+
+  withLock(function() {
+    var rows = checkInRows();
+    var sheet = null;
+    readEvents().forEach(function(r) {
+      var ev = r.event;
+      if (!ev.open) return;
+      var w = eventWindow(ev);
+      if (ts < w.since || ts >= w.until) return;
+      var already = rows.some(function(row) { return String(row[1]) === ev.id && trainerKey(row[2]) === key; });
+      if (already) return;
+      sheet = sheet || getCheckInsSheet();
+      sheet.appendRow([ts.toISOString(), ev.id, String(trainerName).trim(), deviceId, 'redeem']);
+    });
+  });
+}
+
+// ---------- Lotteries ----------
+
+// Lotteries tab: Id | Name | Created At | Since | Closed At | Winners (JSON array) | Overrides (JSON) | Winner Count | Event ID
 // Overrides = { excluded: [trainerKey], renames: { originalTrainerKey: displayName } } so admin edits
-// apply to code redeemers too without touching the ScanLog.
+// apply to entrants without touching the ScanLog or CheckIns.
+// Lotteries without an Event ID predate events and still use their own check-in date and sign-ups.
 function getLotteriesSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Lotteries');
   if (!sheet) {
     sheet = ss.insertSheet('Lotteries');
-    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners', 'Overrides', 'Winner Count']);
-  } else if (sheet.getLastColumn() < 8) {
-    sheet.getRange(1, 7, 1, 2).setValues([['Overrides', 'Winner Count']]);
+    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners', 'Overrides', 'Winner Count', 'Event ID']);
+  } else if (sheet.getLastColumn() < 9) {
+    sheet.getRange(1, 7, 1, 3).setValues([['Overrides', 'Winner Count', 'Event ID']]);
   }
   return sheet;
 }
@@ -530,7 +835,7 @@ function getLotteriesSheet() {
 function parseOverrides(value) {
   var o = {};
   try { o = JSON.parse(value || '{}') || {}; } catch (err) {}
-  return { excluded: o.excluded || [], renames: o.renames || {} };
+  return { excluded: o.excluded || [], renames: o.renames || {}, skipped: o.skipped || [] };
 }
 
 function saveLotteryFields(found) {
@@ -571,7 +876,8 @@ function readLotteries() {
         closedAt: closedAt,
         open: !closedAt,
         winners: winners,
-        winnerCount: Math.max(1, parseInt(rows[i][7], 10) || 1)
+        winnerCount: Math.max(1, parseInt(rows[i][7], 10) || 1),
+        eventId: String(rows[i][8] || '')
       }
     });
   }
@@ -588,18 +894,19 @@ function findLottery(id) {
   return null;
 }
 
-function createLottery(name, since) {
+function createLottery(name, eventId) {
   name = String(name).trim().slice(0, 60);
   if (!name) return { error: 'Lottery name is required' };
-  var sinceIso = toIso(since) || new Date().toISOString();
 
   return withLock(function() {
+    var ev = findEvent(eventId);
+    if (!ev) return { error: 'Choose an event for this lottery' };
     var id = Utilities.getUuid().split('-')[0];
     var now = new Date().toISOString();
-    getLotteriesSheet().appendRow([id, name, now, sinceIso, '', '[]', '{}', 1]);
+    getLotteriesSheet().appendRow([id, name, now, ev.event.date, '', '[]', '{}', 1, eventId]);
     return {
       success: true,
-      lottery: { id: id, name: name, createdAt: now, since: sinceIso, closedAt: '', open: true, winners: [], winnerCount: 1 }
+      lottery: { id: id, name: name, createdAt: now, since: ev.event.date, closedAt: '', open: true, winners: [], winnerCount: 1, eventId: eventId }
     };
   });
 }
@@ -625,6 +932,7 @@ function recordWinner(id, trainerName) {
     if (!found) return { error: 'Lottery not found' };
     var winners = found.lottery.winners;
     var already = winners.some(function(w) { return trainerKey(w) === trainerKey(trainerName); });
+    if (found.overrides.skipped.indexOf(trainerKey(trainerName)) !== -1) return { error: trainerName + ' was skipped. Restore them first.' };
     if (!already && winners.length >= found.lottery.winnerCount) return { error: 'All winners have been drawn' };
     if (!already) winners.push(trainerName);
     getLotteriesSheet().getRange(found.row, 6).setValue(JSON.stringify(winners));
@@ -648,20 +956,22 @@ function setWinnerCount(id, count) {
   });
 }
 
-function updateLottery(id, name, since) {
+function updateLottery(id, name, eventId) {
   name = String(name).trim().slice(0, 60);
   if (!name) return { error: 'Lottery name is required' };
-  var sinceIso = toIso(since);
-  if (!sinceIso) return { error: 'Check-in date is required' };
 
   return withLock(function() {
     var found = findLottery(id);
     if (!found) return { error: 'Lottery not found' };
+    var ev = findEvent(eventId);
+    if (!ev) return { error: 'Choose an event for this lottery' };
     var sheet = getLotteriesSheet();
     sheet.getRange(found.row, 2).setValue(name);
-    sheet.getRange(found.row, 4).setValue(sinceIso);
+    sheet.getRange(found.row, 4).setValue(ev.event.date);
+    sheet.getRange(found.row, 9).setValue(eventId);
     found.lottery.name = name;
-    found.lottery.since = sinceIso;
+    found.lottery.since = ev.event.date;
+    found.lottery.eventId = eventId;
     return { success: true, lottery: found.lottery };
   });
 }
@@ -741,6 +1051,24 @@ function unmarkWinner(id, trainerName) {
   if (!key) return { error: 'Trainer name is required' };
   return entrantMutation(id, function(found) {
     found.lottery.winners = withoutKey(found.lottery.winners, key);
+  });
+}
+
+// For a winner who isn't around to claim: drop the win and keep them out of later draws for this lottery.
+function skipWinner(id, trainerName) {
+  var key = trainerKey(trainerName);
+  if (!key) return { error: 'Trainer name is required' };
+  return entrantMutation(id, function(found) {
+    found.lottery.winners = withoutKey(found.lottery.winners, key);
+    if (found.overrides.skipped.indexOf(key) === -1) found.overrides.skipped.push(key);
+  });
+}
+
+function unskipEntrant(id, trainerName) {
+  var key = trainerKey(trainerName);
+  if (!key) return { error: 'Trainer name is required' };
+  return entrantMutation(id, function(found) {
+    found.overrides.skipped = found.overrides.skipped.filter(function(k) { return k !== key; });
   });
 }
 
@@ -824,14 +1152,11 @@ function getLotteryEntrants(id) {
   return { entrants: buildEntrants(found) };
 }
 
-// Entrants = trainers who redeemed a code on the check-in date (before the lottery closed), plus its own
-// sign-ups, after applying the lottery's admin renames and removals.
+// Entrants = everyone checked in to the lottery's event (or, for older lotteries, code redeemers on the
+// check-in date plus their own sign-ups), after applying the lottery's admin renames and removals.
 function buildEntrants(found) {
   var id = found.lottery.id;
   var overrides = found.overrides;
-  var w = lotteryWindow(found.lottery);
-  var since = w.since;
-  var until = w.until;
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var entrants = {};
 
@@ -839,10 +1164,30 @@ function buildEntrants(found) {
     var name = resolveEntrantName(overrides, rawName);
     var key = trainerKey(name);
     if (!key || overrides.excluded.indexOf(key) !== -1) return;
-    if (!entrants[key]) entrants[key] = { trainerName: name, redeemed: false, signedUp: false };
+    if (!entrants[key]) entrants[key] = { trainerName: name, redeemed: false, signedUp: false, checkedIn: false };
     entrants[key][flag] = true;
   }
 
+  function sorted() {
+    var list = Object.keys(entrants).map(function(k) {
+      entrants[k].skipped = overrides.skipped.indexOf(k) !== -1;
+      return entrants[k];
+    });
+    list.sort(function(a, b) { return a.trainerName.toLowerCase() < b.trainerName.toLowerCase() ? -1 : 1; });
+    return list;
+  }
+
+  if (found.lottery.eventId) {
+    eventAttendees(found.lottery.eventId).forEach(function(a) {
+      if (a.redeemed) add(a.trainerName, 'redeemed');
+      if (a.checkedIn) add(a.trainerName, 'checkedIn');
+    });
+    return sorted();
+  }
+
+  var w = lotteryWindow(found.lottery);
+  var since = w.since;
+  var until = w.until;
   var scanSheet = ss.getSheetByName('ScanLog');
   if (scanSheet) {
     var scans = scanSheet.getDataRange().getValues();
@@ -861,9 +1206,7 @@ function buildEntrants(found) {
     }
   }
 
-  var list = Object.keys(entrants).map(function(k) { return entrants[k]; });
-  list.sort(function(a, b) { return a.trainerName.toLowerCase() < b.trainerName.toLowerCase() ? -1 : 1; });
-  return list;
+  return sorted();
 }
 
 function getErrors() {

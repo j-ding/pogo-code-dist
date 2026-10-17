@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="1.8.0">
+  <meta name="app-version" content="1.9.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=1.8.0">
+  <link rel="stylesheet" href="css/style.css?v=1.9.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -54,6 +54,7 @@
       <button class="tab" data-tab="active-codes">Active Codes</button>
       <button class="tab" data-tab="display">Display</button>
       <button class="tab" data-tab="scan-log">Scan Log</button>
+      <button class="tab" data-tab="checkin">Check In</button>
       <button class="tab" data-tab="lottery">Lottery</button>
       <button class="tab" data-tab="community">Community</button>
       <button class="tab" data-tab="settings">Settings</button>
@@ -146,6 +147,64 @@
         </div>
       </section>
 
+      <!-- Check In Tab -->
+      <section id="checkin" class="tab-content">
+        <div class="card">
+          <h2>New Event</h2>
+          <form id="event-create-form" class="lottery-create">
+            <div class="form-group">
+              <label for="event-name">Name</label>
+              <input type="text" id="event-name" placeholder="e.g. Community Day October" maxlength="60" required>
+            </div>
+            <div class="form-group">
+              <label for="event-date">Date</label>
+              <input type="date" id="event-date" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Create Event</button>
+          </form>
+          <p class="card-note form-note">Trainers who redeem a code on the event's date are checked in automatically.</p>
+        </div>
+
+        <div id="event-detail" class="card hidden">
+          <div class="codes-header">
+            <h2 id="event-title"></h2>
+            <span id="event-status" class="badge"></span>
+          </div>
+          <div class="lottery-meta-row">
+            <p id="event-meta" class="card-note"></p>
+            <div class="lottery-toolbar-actions">
+              <button id="event-toggle" class="btn btn-small btn-secondary"></button>
+              <button id="event-delete" class="btn btn-small btn-danger">Delete</button>
+            </div>
+          </div>
+
+          <div id="event-signup" class="lottery-signup">
+            <div id="event-qr"></div>
+            <div class="qr-actions">
+              <button id="event-download-qr" class="btn btn-small btn-secondary">Download QR</button>
+              <button id="event-copy-link" class="btn btn-small btn-secondary">Copy Check-In Link</button>
+            </div>
+          </div>
+
+          <div class="lottery-toolbar">
+            <h3>Checked In <span id="event-count" class="count-pill">0</span></h3>
+            <div class="lottery-toolbar-actions">
+              <button id="event-refresh" class="btn btn-small btn-secondary">Refresh</button>
+            </div>
+          </div>
+          <div id="event-attendees" class="lottery-list">
+            <p class="empty-state">No one has checked in yet.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Events</h2>
+          <div id="event-history" class="lottery-history">
+            <p class="empty-state">No events yet.</p>
+          </div>
+        </div>
+      </section>
+
       <!-- Lottery Tab -->
       <section id="lottery" class="tab-content">
         <div class="card">
@@ -156,8 +215,8 @@
               <input type="text" id="lottery-name" placeholder="e.g. Community Day Raffle" maxlength="60" required>
             </div>
             <div class="form-group">
-              <label for="lottery-since">Check-in date</label>
-              <input type="date" id="lottery-since" required>
+              <label for="lottery-event">Event</label>
+              <select id="lottery-event" required></select>
             </div>
             <button type="submit" class="btn btn-primary">Create Lottery</button>
           </form>
@@ -184,22 +243,14 @@
               <input type="text" id="lottery-edit-name" maxlength="60" required>
             </div>
             <div class="form-group">
-              <label for="lottery-edit-since">Check-in date</label>
-              <input type="date" id="lottery-edit-since" required>
+              <label for="lottery-edit-event">Event</label>
+              <select id="lottery-edit-event" required></select>
             </div>
             <div class="lottery-toolbar-actions">
               <button type="submit" class="btn btn-small btn-primary">Save</button>
               <button type="button" id="lottery-edit-cancel" class="btn btn-small btn-secondary">Cancel</button>
             </div>
           </form>
-
-          <div id="lottery-signup" class="lottery-signup">
-            <div id="lottery-qr"></div>
-            <div class="qr-actions">
-              <button id="lottery-download-qr" class="btn btn-small btn-secondary">Download QR</button>
-              <button id="lottery-copy-link" class="btn btn-small btn-secondary">Copy Sign-Up Link</button>
-            </div>
-          </div>
 
           <div id="lottery-winner-banner" class="winner-banner hidden"></div>
 
@@ -310,13 +361,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v1.8.0</span>
+      <span>v1.9.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=1.8.0"></script>
-  <script src="js/error-logger.js?v=1.8.0"></script>
-  <script src="js/auth.js?v=1.8.0"></script>
-  <script src="js/app.js?v=1.8.0"></script>
+  <script src="js/site-config.js?v=1.9.0"></script>
+  <script src="js/error-logger.js?v=1.9.0"></script>
+  <script src="js/auth.js?v=1.9.0"></script>
+  <script src="js/app.js?v=1.9.0"></script>
 </body>
 </html>

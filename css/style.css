@@ -631,6 +631,10 @@ header h1 {
   border: 1px solid var(--gold-border);
 }
 
+.form-note {
+  margin-top: 12px;
+}
+
 .lottery-meta-row {
   display: flex;
   justify-content: space-between;
@@ -650,6 +654,22 @@ header h1 {
 .lottery-entrant .lottery-name {
   flex: 1;
   min-width: 120px;
+}
+
+.lottery-entrant .code-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.lottery-entrant.is-skipped .lottery-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.badge-skipped {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
 }
 
 .lottery-entrant-actions {

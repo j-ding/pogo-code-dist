@@ -81,6 +81,7 @@ function activateTab(name) {
   if (name === 'active-codes') renderCodesList();
   if (name === 'display') initDisplay();
   if (name === 'scan-log') loadScanLog();
+  if (name === 'checkin') initCheckIn();
   if (name === 'lottery') initLottery();
   if (name === 'community') initCommunity();
 }
@@ -118,20 +119,7 @@ document.getElementById('community').addEventListener('click', (e) => {
     return;
   }
   const canvas = document.querySelector(`#community-qr-${key} canvas`);
-  if (!canvas) return;
-  // QR scanners need a white quiet zone around the code, which the raw canvas doesn't include.
-  const margin = Math.round(canvas.width * 0.08);
-  const out = document.createElement('canvas');
-  out.width = canvas.width + margin * 2;
-  out.height = canvas.height + margin * 2;
-  const ctx = out.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, out.width, out.height);
-  ctx.drawImage(canvas, margin, margin);
-  const link = document.createElement('a');
-  link.download = `pogo-${key}-qr.png`;
-  link.href = out.toDataURL('image/png');
-  link.click();
+  if (canvas) downloadQrCanvas(canvas, `pogo-${key}-qr.png`);
 });
 
 document.querySelectorAll('.tab').forEach(tab => {
@@ -157,10 +145,6 @@ function escapeHtml(value) {
 // Lottery
 const lotteryState = { lotteries: [], selectedId: null, entrants: [], drawing: false, editingKey: null };
 
-function getLotteryUrl(id) {
-  return `${getBaseUrl()}/lottery.html?id=${encodeURIComponent(id)}`;
-}
-
 function todayInputValue() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -178,10 +162,29 @@ function isWinner(lottery, name) {
   return lottery.winners.some(w => trainerKey(w) === trainerKey(name));
 }
 
-function initLottery() {
-  const sinceInput = document.getElementById('lottery-since');
-  if (!sinceInput.value) sinceInput.value = todayInputValue();
+async function initLottery() {
+  await loadEvents();
+  fillEventSelect(document.getElementById('lottery-event'));
   loadLotteries();
+}
+
+function eventLabel(ev) {
+  return `${ev.name} (${new Date(ev.date).toLocaleDateString()})`;
+}
+
+function fillEventSelect(select, selectedId) {
+  const events = eventState.events;
+  if (events.length === 0) {
+    select.innerHTML = '<option value="">Create an event in the Check In tab first</option>';
+    return;
+  }
+  select.innerHTML = events.map(ev => `<option value="${escapeHtml(ev.id)}">${escapeHtml(eventLabel(ev))}</option>`).join('');
+  if (selectedId && events.some(ev => ev.id === selectedId)) select.value = selectedId;
+}
+
+function lotteryEventName(lottery) {
+  const ev = eventState.events.find(e => e.id === lottery.eventId);
+  return ev ? eventLabel(ev) : 'Deleted event';
 }
 
 async function loadLotteries() {
@@ -213,15 +216,20 @@ function renderLotteryHistory() {
     return;
   }
 
-  history.innerHTML = lotteryState.lotteries.map(l => `
-    <button type="button" class="lottery-history-item${l.id === lotteryState.selectedId ? ' selected' : ''}" data-id="${escapeHtml(l.id)}">
-      <span class="lottery-history-main">
-        <span class="lottery-name">${escapeHtml(l.name)}</span>
-        <span class="code-meta">${new Date(l.createdAt).toLocaleDateString()}${l.winners.length ? ' · Winner: ' + escapeHtml(l.winners.join(', ')) : ''}</span>
-      </span>
-      <span class="badge ${l.open ? 'badge-active' : 'badge-inactive'}">${l.open ? 'Open' : 'Closed'}</span>
-    </button>
-  `).join('');
+  history.innerHTML = lotteryState.lotteries.map(l => {
+    const source = l.eventId ? lotteryEventName(l) : new Date(l.createdAt).toLocaleDateString();
+    const winners = l.winners.length ? ` · Winner${l.winners.length > 1 ? 's' : ''}: ${l.winners.join(', ')}` : '';
+    const badge = l.eventId ? '' : `<span class="badge ${l.open ? 'badge-active' : 'badge-inactive'}">${l.open ? 'Open' : 'Closed'}</span>`;
+    return `
+      <button type="button" class="lottery-history-item${l.id === lotteryState.selectedId ? ' selected' : ''}" data-id="${escapeHtml(l.id)}">
+        <span class="lottery-history-main">
+          <span class="lottery-name">${escapeHtml(l.name)}</span>
+          <span class="code-meta">${escapeHtml(source + winners)}</span>
+        </span>
+        ${badge}
+      </button>
+    `;
+  }).join('');
 
   history.querySelectorAll('.lottery-history-item').forEach(el => {
     el.addEventListener('click', () => selectLottery(el.dataset.id));
@@ -231,16 +239,24 @@ function renderLotteryHistory() {
 function renderLotteryHeader(lottery) {
   document.getElementById('lottery-title').textContent = lottery.name;
 
+  // Lotteries created before events existed keep their own open/closed state and check-in date.
+  const legacy = !lottery.eventId;
   const status = document.getElementById('lottery-status');
   status.textContent = lottery.open ? 'Open' : 'Closed';
   status.className = `badge ${lottery.open ? 'badge-active' : 'badge-inactive'}`;
+  status.classList.toggle('hidden', !legacy);
 
-  const checkIn = new Date(lottery.since).toLocaleDateString();
-  const closed = lottery.closedAt ? ` · Closed ${new Date(lottery.closedAt).toLocaleString()}` : '';
-  document.getElementById('lottery-meta').textContent = `Check-in date: ${checkIn}${closed}`;
+  if (legacy) {
+    const checkIn = new Date(lottery.since).toLocaleDateString();
+    const closed = lottery.closedAt ? ` · Closed ${new Date(lottery.closedAt).toLocaleString()}` : '';
+    document.getElementById('lottery-meta').textContent = `Check-in date: ${checkIn}${closed}`;
+  } else {
+    document.getElementById('lottery-meta').textContent = `Entrants from: ${lotteryEventName(lottery)}`;
+  }
 
-  document.getElementById('lottery-signup').classList.toggle('hidden', !lottery.open);
-  document.getElementById('lottery-toggle').textContent = lottery.open ? 'Close Lottery' : 'Reopen';
+  const toggle = document.getElementById('lottery-toggle');
+  toggle.textContent = lottery.open ? 'Close Lottery' : 'Reopen';
+  toggle.classList.toggle('hidden', !legacy);
   updateDrawButton(lottery);
 
   const banner = document.getElementById('lottery-winner-banner');
@@ -264,18 +280,6 @@ function selectLottery(id) {
   document.getElementById('lottery-detail').classList.remove('hidden');
   renderLotteryHeader(lottery);
   renderLotteryHistory();
-
-  const qr = document.getElementById('lottery-qr');
-  qr.innerHTML = '';
-  new QRCode(qr, {
-    text: getLotteryUrl(id),
-    width: 180,
-    height: 180,
-    colorDark: '#1a1a2e',
-    colorLight: '#ffffff',
-    correctLevel: QRCode.CorrectLevel.M,
-  });
-
   loadLotteryEntrants();
 }
 
@@ -327,15 +331,22 @@ function renderLotteryEntrants() {
 
     const badges = [
       winner ? '<span class="badge badge-winner">Winner</span>' : '',
+      e.skipped ? '<span class="badge badge-skipped">Skipped</span>' : '',
       e.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : '',
       e.signedUp ? '<span class="badge badge-new">Lottery sign-up</span>' : '',
+      e.checkedIn ? '<span class="badge badge-new">Checked in</span>' : '',
     ].join(' ');
+    const stateClass = winner ? ' is-winner' : e.skipped ? ' is-skipped' : '';
+    const winnerActions = winner
+      ? '<button type="button" class="btn btn-small btn-primary" data-action="redraw" title="Winner isn\'t here: skip them and draw someone else">Redraw</button>'
+        + '<button type="button" class="btn btn-small btn-secondary" data-action="unwin">Undo Win</button>'
+      : e.skipped ? '<button type="button" class="btn btn-small btn-secondary" data-action="unskip">Restore</button>' : '';
     return `
-      <div class="lottery-entrant${winner ? ' is-winner' : ''}" data-key="${escapeHtml(key)}" data-name="${escapeHtml(e.trainerName)}">
+      <div class="lottery-entrant${stateClass}" data-key="${escapeHtml(key)}" data-name="${escapeHtml(e.trainerName)}">
         <span class="lottery-name">${escapeHtml(e.trainerName)}</span>
         <span class="lottery-badges">${badges}</span>
         <span class="lottery-entrant-actions">
-          ${winner ? '<button type="button" class="btn btn-small btn-secondary" data-action="unwin">Undo Win</button>' : ''}
+          ${winnerActions}
           <button type="button" class="btn btn-small btn-secondary" data-action="edit">Edit</button>
           <button type="button" class="btn btn-small btn-danger" data-action="remove">Remove</button>
         </span>
@@ -381,6 +392,13 @@ async function handleEntrantAction(action, row) {
       if (!confirm(`Undo ${name}'s win? They'll go back into the draw.`)) return;
       applyLotteryUpdate(await callSheet({ action: 'unmarkWinner', id: lottery.id, trainerName: name }));
       showToast(`${name} is no longer a winner`);
+    } else if (action === 'redraw') {
+      if (!confirm(`${name} isn't here? They'll be skipped for this lottery and a new winner will be drawn.`)) return;
+      applyLotteryUpdate(await callSheet({ action: 'skipWinner', id: lottery.id, trainerName: name }));
+      await drawLotteryWinners(1);
+    } else if (action === 'unskip') {
+      applyLotteryUpdate(await callSheet({ action: 'unskipEntrant', id: lottery.id, trainerName: name }));
+      showToast(`${name} is back in the draw`);
     }
   } catch (err) {
     showToast('Could not update entrant: ' + err.message);
@@ -511,9 +529,9 @@ async function drawLotteryWinners(count) {
 
 // Returns the winner's name, or null if nothing could be drawn.
 async function drawOneWinner(lottery) {
-  const pool = lotteryState.entrants.filter(e => !isWinner(lottery, e.trainerName));
+  const pool = lotteryState.entrants.filter(e => !e.skipped && !isWinner(lottery, e.trainerName));
   if (pool.length === 0) {
-    showToast(lotteryState.entrants.length ? 'Everyone has already won' : 'No entrants to draw from');
+    showToast(lotteryState.entrants.length ? 'No one left to draw' : 'No entrants to draw from');
     return null;
   }
 
@@ -560,16 +578,18 @@ async function drawOneWinner(lottery) {
 document.getElementById('lottery-create-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const name = document.getElementById('lottery-name').value.trim();
-  const sinceValue = document.getElementById('lottery-since').value || todayInputValue();
+  const eventId = document.getElementById('lottery-event').value;
   if (!name) return;
+  if (!eventId) {
+    showToast('Create an event in the Check In tab first');
+    return;
+  }
 
-  const [y, m, d] = sinceValue.split('-').map(Number);
-  const since = new Date(y, m - 1, d).toISOString();
   const button = e.target.querySelector('button[type="submit"]');
   button.disabled = true;
 
   try {
-    const data = await callSheet({ action: 'createLottery', name, since });
+    const data = await callSheet({ action: 'createLottery', name, eventId });
     document.getElementById('lottery-name').value = '';
     lotteryState.selectedId = data.lottery.id;
     await loadLotteries();
@@ -596,19 +616,13 @@ document.getElementById('lottery-toggle').addEventListener('click', async () => 
   }
 });
 
-function toDateInputValue(iso) {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return todayInputValue();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 function showLotteryEditForm(show) {
   document.getElementById('lottery-view-header').classList.toggle('hidden', show);
   document.getElementById('lottery-edit-form').classList.toggle('hidden', !show);
   if (!show) return;
   const lottery = selectedLottery();
   document.getElementById('lottery-edit-name').value = lottery.name;
-  document.getElementById('lottery-edit-since').value = toDateInputValue(lottery.since);
+  fillEventSelect(document.getElementById('lottery-edit-event'), lottery.eventId);
   document.getElementById('lottery-edit-name').focus();
 }
 
@@ -619,16 +633,14 @@ document.getElementById('lottery-edit-form').addEventListener('submit', async (e
   e.preventDefault();
   const lottery = selectedLottery();
   const name = document.getElementById('lottery-edit-name').value.trim();
-  const sinceValue = document.getElementById('lottery-edit-since').value;
-  if (!lottery || !name || !sinceValue) return;
+  const eventId = document.getElementById('lottery-edit-event').value;
+  if (!lottery || !name || !eventId) return;
 
-  const [y, m, d] = sinceValue.split('-').map(Number);
-  const since = new Date(y, m - 1, d).toISOString();
   const button = e.target.querySelector('button[type="submit"]');
   button.disabled = true;
 
   try {
-    const data = await callSheet({ action: 'updateLottery', id: lottery.id, name, since });
+    const data = await callSheet({ action: 'updateLottery', id: lottery.id, name, eventId });
     Object.assign(lottery, data.lottery);
     showLotteryEditForm(false);
     renderLotteryHeader(lottery);
@@ -665,19 +677,238 @@ document.getElementById('lottery-draw-all').addEventListener('click', () => {
 });
 document.getElementById('lottery-refresh').addEventListener('click', loadLotteryEntrants);
 
-document.getElementById('lottery-copy-link').addEventListener('click', () => {
-  if (!lotteryState.selectedId) return;
-  navigator.clipboard.writeText(getLotteryUrl(lotteryState.selectedId)).then(() => showToast('Sign-up link copied'));
+// Events / Check In
+const eventState = { events: [], selectedId: null, attendees: [] };
+
+function getCheckInUrl(id) {
+  return `${getBaseUrl()}/checkin.html?event=${encodeURIComponent(id)}`;
+}
+
+function selectedEvent() {
+  return eventState.events.find(ev => ev.id === eventState.selectedId) || null;
+}
+
+function dateInputToIso(value) {
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, m - 1, d).toISOString();
+}
+
+// QR scanners need a white quiet zone around the code, which the raw canvas doesn't include.
+function downloadQrCanvas(canvas, filename) {
+  const margin = Math.round(canvas.width * 0.08);
+  const out = document.createElement('canvas');
+  out.width = canvas.width + margin * 2;
+  out.height = canvas.height + margin * 2;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(canvas, margin, margin);
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = out.toDataURL('image/png');
+  link.click();
+}
+
+async function loadEvents() {
+  const data = await callSheet({ action: 'getEvents' }).catch(err => {
+    document.getElementById('event-history').innerHTML =
+      `<p class="empty-state">Couldn't load events: ${escapeHtml(err.message)}</p>`;
+    return null;
+  });
+  if (data) eventState.events = data.events || [];
+  return eventState.events;
+}
+
+async function initCheckIn() {
+  const dateInput = document.getElementById('event-date');
+  if (!dateInput.value) dateInput.value = todayInputValue();
+  await loadEvents();
+
+  let saved = null;
+  try { saved = localStorage.getItem('pogo_event_selected'); } catch {}
+  const exists = id => eventState.events.some(ev => ev.id === id);
+  const id = exists(eventState.selectedId) ? eventState.selectedId
+    : exists(saved) ? saved
+    : (eventState.events[0] && eventState.events[0].id);
+
+  renderEventHistory();
+  if (id) selectEvent(id);
+  else document.getElementById('event-detail').classList.add('hidden');
+}
+
+function renderEventHistory() {
+  const history = document.getElementById('event-history');
+  if (eventState.events.length === 0) {
+    history.innerHTML = '<p class="empty-state">No events yet. Create one above.</p>';
+    return;
+  }
+  history.innerHTML = eventState.events.map(ev => `
+    <button type="button" class="lottery-history-item${ev.id === eventState.selectedId ? ' selected' : ''}" data-id="${escapeHtml(ev.id)}">
+      <span class="lottery-history-main">
+        <span class="lottery-name">${escapeHtml(ev.name)}</span>
+        <span class="code-meta">${new Date(ev.date).toLocaleDateString()} · ${ev.attendeeCount} checked in</span>
+      </span>
+      <span class="badge ${ev.open ? 'badge-active' : 'badge-inactive'}">${ev.open ? 'Open' : 'Closed'}</span>
+    </button>
+  `).join('');
+  history.querySelectorAll('.lottery-history-item').forEach(el => {
+    el.addEventListener('click', () => selectEvent(el.dataset.id));
+  });
+}
+
+function selectEvent(id) {
+  const ev = eventState.events.find(e => e.id === id);
+  if (!ev) return;
+  eventState.selectedId = id;
+  try { localStorage.setItem('pogo_event_selected', id); } catch {}
+
+  document.getElementById('event-detail').classList.remove('hidden');
+  document.getElementById('event-title').textContent = ev.name;
+  const status = document.getElementById('event-status');
+  status.textContent = ev.open ? 'Open' : 'Closed';
+  status.className = `badge ${ev.open ? 'badge-active' : 'badge-inactive'}`;
+  const closed = ev.closedAt ? ` · Closed ${new Date(ev.closedAt).toLocaleString()}` : '';
+  document.getElementById('event-meta').textContent = `${new Date(ev.date).toLocaleDateString()}${closed}`;
+  document.getElementById('event-toggle').textContent = ev.open ? 'Close Check-In' : 'Reopen';
+  document.getElementById('event-signup').classList.toggle('hidden', !ev.open);
+
+  const qr = document.getElementById('event-qr');
+  qr.innerHTML = '';
+  if (ev.open) {
+    new QRCode(qr, {
+      text: getCheckInUrl(id),
+      width: 200,
+      height: 200,
+      colorDark: '#1a1a2e',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  }
+
+  renderEventHistory();
+  loadEventAttendees();
+}
+
+async function loadEventAttendees() {
+  const ev = selectedEvent();
+  if (!ev) return;
+  const list = document.getElementById('event-attendees');
+  list.innerHTML = '<p class="empty-state">Loading check-ins...</p>';
+  try {
+    const data = await callSheet({ action: 'getEventAttendees', id: ev.id });
+    if (eventState.selectedId !== ev.id) return;
+    eventState.attendees = data.attendees || [];
+    ev.attendeeCount = eventState.attendees.length;
+    renderEventAttendees();
+    renderEventHistory();
+  } catch (err) {
+    document.getElementById('event-count').textContent = '0';
+    list.innerHTML = `<p class="empty-state">Couldn't load check-ins: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderEventAttendees() {
+  const list = document.getElementById('event-attendees');
+  const attendees = eventState.attendees;
+  document.getElementById('event-count').textContent = attendees.length;
+  if (attendees.length === 0) {
+    list.innerHTML = '<p class="empty-state">No one has checked in yet.</p>';
+    return;
+  }
+  list.innerHTML = attendees.map(a => `
+    <div class="lottery-entrant" data-name="${escapeHtml(a.trainerName)}">
+      <span class="lottery-name">${escapeHtml(a.trainerName)}</span>
+      <span class="lottery-badges">
+        ${a.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : ''}
+        ${a.checkedIn ? '<span class="badge badge-new">Checked in</span>' : ''}
+      </span>
+      <span class="code-meta">${new Date(a.firstSeen).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+      <span class="lottery-entrant-actions">
+        <button type="button" class="btn btn-small btn-danger" data-action="remove-attendee">Remove</button>
+      </span>
+    </div>
+  `).join('');
+}
+
+document.getElementById('event-attendees').addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-action="remove-attendee"]');
+  const ev = selectedEvent();
+  if (!button || !ev) return;
+  const name = button.closest('.lottery-entrant').dataset.name;
+  if (!confirm(`Remove ${name} from "${ev.name}"? They'll also drop out of any lottery for this event.`)) return;
+  try {
+    const data = await callSheet({ action: 'removeAttendee', id: ev.id, trainerName: name });
+    eventState.attendees = data.attendees || [];
+    ev.attendeeCount = eventState.attendees.length;
+    renderEventAttendees();
+    renderEventHistory();
+    showToast(`${name} removed`);
+  } catch (err) {
+    showToast('Could not remove: ' + err.message);
+  }
 });
 
-document.getElementById('lottery-download-qr').addEventListener('click', () => {
-  const lottery = selectedLottery();
-  const canvas = document.querySelector('#lottery-qr canvas');
-  if (!lottery || !canvas) return;
-  const link = document.createElement('a');
-  link.download = `pogo-lottery-${lottery.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`;
-  link.href = canvas.toDataURL('image/png');
-  link.click();
+document.getElementById('event-create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('event-name').value.trim();
+  const dateValue = document.getElementById('event-date').value || todayInputValue();
+  if (!name) return;
+  const button = e.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const data = await callSheet({ action: 'createEvent', name, date: dateInputToIso(dateValue) });
+    document.getElementById('event-name').value = '';
+    eventState.selectedId = data.event.id;
+    await initCheckIn();
+    showToast(data.backfilled ? `Event created · ${data.backfilled} already checked in from redemptions` : 'Event created');
+  } catch (err) {
+    showToast('Could not create event: ' + err.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('event-toggle').addEventListener('click', async () => {
+  const ev = selectedEvent();
+  if (!ev) return;
+  if (ev.open && !confirm(`Close check-in for "${ev.name}"? The QR code will stop accepting check-ins and later redemptions won't be added.`)) return;
+  try {
+    const data = await callSheet({ action: 'setEventStatus', id: ev.id, open: ev.open ? 'false' : 'true' });
+    Object.assign(ev, data.event);
+    selectEvent(ev.id);
+    showToast(ev.open ? 'Check-in reopened' : 'Check-in closed');
+  } catch (err) {
+    showToast('Could not update event: ' + err.message);
+  }
+});
+
+document.getElementById('event-delete').addEventListener('click', async () => {
+  const ev = selectedEvent();
+  if (!ev) return;
+  if (!confirm(`Delete "${ev.name}" and its check-in list? This can't be undone.`)) return;
+  try {
+    await callSheet({ action: 'deleteEvent', id: ev.id });
+    eventState.selectedId = null;
+    try { localStorage.removeItem('pogo_event_selected'); } catch {}
+    await initCheckIn();
+    showToast('Event deleted');
+  } catch (err) {
+    showToast('Could not delete event: ' + err.message);
+  }
+});
+
+document.getElementById('event-refresh').addEventListener('click', loadEventAttendees);
+
+document.getElementById('event-copy-link').addEventListener('click', () => {
+  if (!eventState.selectedId) return;
+  navigator.clipboard.writeText(getCheckInUrl(eventState.selectedId)).then(() => showToast('Check-in link copied'));
+});
+
+document.getElementById('event-download-qr').addEventListener('click', () => {
+  const ev = selectedEvent();
+  const canvas = document.querySelector('#event-qr canvas');
+  if (!ev || !canvas) return;
+  downloadQrCanvas(canvas, `pogo-checkin-${ev.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png`);
 });
 
 // Setup banner
@@ -1008,7 +1239,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 10;
+const REQUIRED_SCRIPT_VERSION = 11;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);

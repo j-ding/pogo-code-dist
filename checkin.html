@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="app-version" content="1.9.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Event Check-In - PoGo Code Dist</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css?v=1.9.0">
+</head>
+<body>
+  <div class="container redeem-container">
+    <header>
+      <h1>PoGo Code Dist</h1>
+      <p class="subtitle">Event Check-In</p>
+    </header>
+
+    <section id="step-loading" class="card">
+      <div class="spinner"></div>
+    </section>
+
+    <section id="step-unavailable" class="card hidden">
+      <h2 id="unavailable-title">Event Not Found</h2>
+      <p id="unavailable-message">This check-in link isn't valid. Ask an organizer for a new one.</p>
+    </section>
+
+    <section id="step-join" class="card hidden">
+      <h2 id="join-title">Check In</h2>
+      <p>Enter your Pokemon Go trainer name to check in.</p>
+      <form id="checkin-form">
+        <div class="form-group">
+          <label for="checkin-trainer">Trainer Name</label>
+          <input type="text" id="checkin-trainer" placeholder="Your trainer name" pattern="\s*[A-Za-z0-9][A-Za-z0-9\s]*" title="Letters and numbers only" autocapitalize="off" autocomplete="off" spellcheck="false" required>
+        </div>
+        <p id="checkin-error" class="login-error hidden"></p>
+        <button type="submit" id="checkin-submit" class="btn btn-primary btn-large">Check In</button>
+      </form>
+    </section>
+
+    <section id="step-joined" class="card hidden">
+      <h2>You're Checked In!</h2>
+      <p id="joined-message"></p>
+    </section>
+  </div>
+
+  <script src="js/site-config.js?v=1.9.0"></script>
+  <script src="js/error-logger.js?v=1.9.0"></script>
+  <script src="js/checkin.js?v=1.9.0"></script>
+</body>
+</html>
