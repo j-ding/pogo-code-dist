@@ -183,8 +183,91 @@ document.getElementById('community').addEventListener('click', (e) => {
   if (canvas) downloadQrCanvas(canvas, `pogo-${key}-qr.png`);
 });
 
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+// Tab order: press and hold a tab to pick it up, then drag. A quick click still switches tabs.
+const TAB_ORDER_KEY = 'pogo_tab_order';
+const tabBar = document.querySelector('.tabs');
+const DEFAULT_TAB_ORDER = [...tabBar.querySelectorAll('.tab')].map(t => t.dataset.tab);
+
+function applyTabOrder(order) {
+  const tabs = new Map([...tabBar.querySelectorAll('.tab')].map(t => [t.dataset.tab, t]));
+  order.forEach(name => { if (tabs.has(name)) { tabBar.appendChild(tabs.get(name)); tabs.delete(name); } });
+  tabs.forEach(t => tabBar.appendChild(t));
+}
+
+function saveTabOrder() {
+  try { localStorage.setItem(TAB_ORDER_KEY, JSON.stringify([...tabBar.querySelectorAll('.tab')].map(t => t.dataset.tab))); } catch {}
+}
+
+try {
+  const saved = JSON.parse(localStorage.getItem(TAB_ORDER_KEY));
+  if (Array.isArray(saved)) applyTabOrder(saved);
+} catch {}
+
+const tabDrag = { timer: null, tab: null, active: false, startX: 0, startY: 0, suppressClick: false };
+
+function endTabDrag() {
+  clearTimeout(tabDrag.timer);
+  if (tabDrag.active) {
+    tabDrag.tab.classList.remove('tab-dragging');
+    tabBar.classList.remove('tabs-reordering');
+    saveTabOrder();
+    tabDrag.suppressClick = true;
+  }
+  tabDrag.tab = null;
+  tabDrag.active = false;
+}
+
+tabBar.addEventListener('pointerdown', (e) => {
+  const tab = e.target.closest('.tab');
+  if (!tab || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  tabDrag.tab = tab;
+  tabDrag.startX = e.clientX;
+  tabDrag.startY = e.clientY;
+  tabDrag.timer = setTimeout(() => {
+    tabDrag.active = true;
+    tab.classList.add('tab-dragging');
+    tabBar.classList.add('tabs-reordering');
+    try { tab.setPointerCapture(e.pointerId); } catch {}
+    if (navigator.vibrate) navigator.vibrate(15);
+  }, 350);
+});
+
+tabBar.addEventListener('pointermove', (e) => {
+  if (!tabDrag.tab) return;
+  if (!tabDrag.active) {
+    // Moving before the hold finishes means the user is scrolling or clicking, not dragging.
+    if (Math.hypot(e.clientX - tabDrag.startX, e.clientY - tabDrag.startY) > 8) endTabDrag();
+    return;
+  }
+  e.preventDefault();
+  const over = document.elementFromPoint(e.clientX, e.clientY);
+  const target = over && over.closest('.tabs .tab');
+  if (!target || target === tabDrag.tab) return;
+  const rect = target.getBoundingClientRect();
+  const before = e.clientY < rect.top || (e.clientY <= rect.bottom && e.clientX < rect.left + rect.width / 2);
+  tabBar.insertBefore(tabDrag.tab, before ? target : target.nextSibling);
+});
+
+tabBar.addEventListener('pointerup', endTabDrag);
+tabBar.addEventListener('pointercancel', endTabDrag);
+// Stops the page from scrolling under your finger while a tab is being dragged on a phone.
+tabBar.addEventListener('touchmove', (e) => { if (tabDrag.active) e.preventDefault(); }, { passive: false });
+tabBar.addEventListener('contextmenu', (e) => { if (e.target.closest('.tab')) e.preventDefault(); });
+
+tabBar.addEventListener('click', (e) => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  if (tabDrag.suppressClick) {
+    tabDrag.suppressClick = false;
+    return;
+  }
+  activateTab(tab.dataset.tab);
+});
+
+document.getElementById('reset-tab-order').addEventListener('click', () => {
+  applyTabOrder(DEFAULT_TAB_ORDER);
+  try { localStorage.removeItem(TAB_ORDER_KEY); } catch {}
+  showToast('Tab order reset');
 });
 
 // Date-only strings come from the date picker; the sheet returns full timestamps for the same dates.
