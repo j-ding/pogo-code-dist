@@ -15,7 +15,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 16;
+var SCRIPT_VERSION = 17;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
@@ -337,6 +337,10 @@ function logScanLocked(data) {
   if (headers.indexOf('Scan ID') === -1) {
     sheet.getRange(1, 14).setValue('Scan ID');
   }
+  if (headers.indexOf('Group') === -1) {
+    sheet.getRange(1, 15).setValue('Group');
+    backfillScanGroups(sheet);
+  }
 
   // The redeem page retries over sendBeacon if the confirmed request times out, so drop repeats.
   if (data.scanId) {
@@ -351,6 +355,7 @@ function logScanLocked(data) {
   }
 
   var isRepeat = checkRepeat(sheet, data.code, data.trainerName);
+  var codeInfo = data.code ? findCodeRow(data.code) : null;
 
   sheet.appendRow([
     data.timestamp || new Date().toISOString(),
@@ -366,11 +371,12 @@ function logScanLocked(data) {
     data.referrer || '',
     isRepeat ? 'Yes' : 'No',
     data.deviceId || '',
-    data.scanId || ''
+    data.scanId || '',
+    codeInfo ? codeInfo.group : ''
   ]);
 
   // Only real codes have side effects, so a forged logScan can't check people in.
-  var knownCode = data.code ? deactivateCodeAfterRedeem(data.code) : false;
+  var knownCode = codeInfo ? deactivateCodeAfterRedeem(data.code) : false;
   if (knownCode && data.trainerName) {
     addRedeemerToOpenEvents(data.trainerName, data.timestamp || new Date().toISOString(), data.deviceId || '');
   }
@@ -483,6 +489,31 @@ function getCodeStatus(code) {
     }
   }
   return { code: target, exists: false, active: false };
+}
+
+function findCodeRow(code) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
+  var target = String(code).trim().toUpperCase();
+  if (!sheet || !target || sheet.getLastRow() < 2) return null;
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]).trim().toUpperCase() === target) return { row: i + 2, group: String(rows[i][1] || '').trim() };
+  }
+  return null;
+}
+
+// Runs once when the Group column is first added: fills older scans from each code's current group.
+function backfillScanGroups(sheet) {
+  var lastRow = sheet.getLastRow();
+  var codes = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
+  if (lastRow < 2 || !codes || codes.getLastRow() < 2) return;
+  var groupByCode = {};
+  codes.getRange(2, 1, codes.getLastRow() - 1, 2).getValues().forEach(function(r) {
+    groupByCode[String(r[0]).trim().toUpperCase()] = String(r[1] || '').trim();
+  });
+  var scanCodes = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
+  var groups = scanCodes.map(function(r) { return [groupByCode[String(r[0]).trim().toUpperCase()] || '']; });
+  sheet.getRange(2, 15, groups.length, 1).setValues(groups);
 }
 
 function deactivateCodeAfterRedeem(code) {
@@ -646,7 +677,8 @@ function getLogs() {
       screenResolution: data[i][9],
       referrer: data[i][10],
       repeat: data[i][11] === 'Yes',
-      deviceId: data[i][12] || ''
+      deviceId: data[i][12] || '',
+      group: data[i][14] || ''
     });
   }
 

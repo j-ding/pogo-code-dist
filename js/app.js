@@ -1645,7 +1645,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 16;
+const REQUIRED_SCRIPT_VERSION = 17;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -1796,6 +1796,7 @@ function renderLogTable(logs) {
         <tr>
           <th>Time</th>
           <th>Code</th>
+          <th>Group</th>
           <th>Trainer</th>
           <th>Device</th>
           <th>OS</th>
@@ -1811,6 +1812,7 @@ function renderLogTable(logs) {
           <tr>
             <td>${new Date(log.timestamp).toLocaleString()}</td>
             <td><strong>${escapeHtml(log.code)}</strong></td>
+            <td>${escapeHtml(log.group)}</td>
             <td>${escapeHtml(log.trainerName)}</td>
             <td>${escapeHtml(log.device)}</td>
             <td>${escapeHtml(log.os)}</td>
