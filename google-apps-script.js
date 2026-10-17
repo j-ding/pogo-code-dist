@@ -15,7 +15,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 15;
+var SCRIPT_VERSION = 16;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
@@ -143,6 +143,10 @@ function handleGet(e) {
 
   if (action === 'renameGroup') {
     return jsonOut(renameGroup(p.oldName || '', p.newName || ''));
+  }
+
+  if (action === 'deleteGroup') {
+    return jsonOut(deleteGroup(p.group || ''));
   }
 
   if (action === 'setCodeGroup') {
@@ -434,6 +438,19 @@ function renameGroup(oldName, newName) {
     if (from && into) getGroupsSheet().deleteRow(from.row);
     else if (from) getGroupsSheet().getRange(from.row, 1).setValue(newName);
     return { success: true, renamed: renamed, groups: groupsResponse() };
+  });
+}
+
+// Deletes every code in the group (used or not) plus its Groups row. ScanLog history is left alone.
+function deleteGroup(group) {
+  group = String(group).trim();
+  return withLock(function() {
+    var removed = deleteRowsWhere(getCodesSheet(), function(row) {
+      return String(row[1] || '').trim() === group;
+    });
+    var groupsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Groups');
+    deleteRowsWhere(groupsSheet, function(row) { return String(row[0] || '').trim() === group; });
+    return { success: true, removed: removed, groups: groupsResponse() };
   });
 }
 

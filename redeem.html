@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.3.0">
+  <meta name="app-version" content="2.4.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Redeem Code - PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.3.0">
+  <link rel="stylesheet" href="css/style.css?v=2.4.0">
 </head>
 <body>
   <div class="container redeem-container">
@@ -26,7 +26,10 @@
           <label for="trainer-name">Trainer Name</label>
           <input type="text" id="trainer-name" placeholder="Your trainer name" required autofocus>
         </div>
-        <button type="submit" class="btn btn-primary btn-large">Redeem Code</button>
+        <button type="submit" id="redeem-submit" class="btn btn-primary btn-large">
+          <span class="btn-spinner hidden" aria-hidden="true"></span>
+          <span class="btn-label">Redeem Code</span>
+        </button>
       </form>
       <div id="code-display" class="code-display">
         <span>Code: </span><strong id="display-code"></strong>
@@ -71,8 +74,8 @@
     </section>
   </div>
 
-  <script src="js/site-config.js?v=2.3.0"></script>
-  <script src="js/error-logger.js?v=2.3.0"></script>
-  <script src="js/redeem.js?v=2.3.0"></script>
+  <script src="js/site-config.js?v=2.4.0"></script>
+  <script src="js/error-logger.js?v=2.4.0"></script>
+  <script src="js/redeem.js?v=2.4.0"></script>
 </body>
 </html>

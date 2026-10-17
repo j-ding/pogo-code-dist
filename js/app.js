@@ -1464,6 +1464,7 @@ function renderCodesList() {
           <span class="code-group-actions">
             <button type="button" class="btn btn-small ${enabled ? 'btn-warning' : 'btn-primary'}" data-group-action="toggle">${enabled ? 'Pause' : 'Enable'}</button>
             <button type="button" class="btn btn-small btn-secondary" data-group-action="rename">Rename</button>
+            <button type="button" class="btn btn-small btn-danger" data-group-action="delete">Delete</button>
           </span>
         </summary>
         <div class="codes-list code-group-body">
@@ -1520,8 +1521,10 @@ document.getElementById('codes-list').addEventListener('click', async (e) => {
     // Buttons sit inside <summary>, so stop the click from also collapsing the group.
     e.preventDefault();
     const name = groupButton.closest('.code-group').dataset.group;
-    if (groupButton.dataset.groupAction === 'toggle') await toggleGroup(name);
-    else await renameCodeGroup(name);
+    const action = groupButton.dataset.groupAction;
+    if (action === 'toggle') await toggleGroup(name);
+    else if (action === 'rename') await renameCodeGroup(name);
+    else if (action === 'delete') await deleteCodeGroup(name);
   } else if (codeButton) {
     await moveCodeToGroup(codeButton.dataset.code);
   }
@@ -1552,6 +1555,25 @@ async function renameCodeGroup(name) {
     showToast(`Renamed to ${next}`);
   } catch (err) {
     showToast('Could not rename group: ' + err.message);
+  }
+}
+
+async function deleteCodeGroup(name) {
+  const codes = getCodes().filter(c => groupOf(c) === name);
+  const used = codes.filter(c => c.active === false).length;
+  const detail = `${codes.length} code${codes.length === 1 ? '' : 's'}` + (used ? ` (${used} used, ${codes.length - used} unused)` : '');
+  if (!confirm(`Delete "${groupDisplayName(name)}" and its ${detail}? They'll be removed from the sheet too. This can't be undone, but scan log history is kept.`)) return;
+  try {
+    const data = await callSheet({ action: 'deleteGroup', group: name });
+    saveCodes(getCodes().filter(c => groupOf(c) !== name));
+    saveGroupStates(data.groups);
+    const collapsed = getCollapsedGroups();
+    collapsed.delete(name);
+    saveCollapsedGroups(collapsed);
+    renderCodesList();
+    showToast(`Deleted ${groupDisplayName(name)} (${data.removed} code${data.removed === 1 ? '' : 's'})`);
+  } catch (err) {
+    showToast('Could not delete group: ' + err.message);
   }
 }
 
@@ -1623,7 +1645,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 15;
+const REQUIRED_SCRIPT_VERSION = 16;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);

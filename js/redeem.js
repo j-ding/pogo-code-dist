@@ -186,15 +186,36 @@ function init() {
   document.getElementById('display-code').textContent = code;
   document.getElementById('manual-link').href = redeemUrl;
 
+  const submitButton = document.getElementById('redeem-submit');
+  function setRedeeming(busy) {
+    submitButton.disabled = busy;
+    submitButton.querySelector('.btn-spinner').classList.toggle('hidden', !busy);
+    submitButton.querySelector('.btn-label').textContent = busy ? 'Redeeming...' : 'Redeem Code';
+    document.getElementById('trainer-name').readOnly = busy;
+  }
+  function backToForm(stepId) {
+    document.getElementById(stepId).classList.add('hidden');
+    document.getElementById('step-trainer').classList.remove('hidden');
+    setRedeeming(false);
+  }
+  // Returning with the browser's back button can restore the page with the button still disabled.
+  window.addEventListener('pageshow', (e) => { if (e.persisted) setRedeeming(false); });
+
   document.getElementById('trainer-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (submitButton.disabled) return;
 
     const trainerName = document.getElementById('trainer-name').value.trim();
     if (!trainerName) return;
 
+    setRedeeming(true);
     const scriptUrl = getScriptUrl();
 
-    const redemption = await checkRedemption(code, trainerName, scriptUrl);
+    // Both checks are independent, so run them together instead of waiting for one then the other.
+    const [redemption, cooldown] = await Promise.all([
+      checkRedemption(code, trainerName, scriptUrl),
+      checkCooldown(trainerName, scriptUrl),
+    ]);
     if (redemption && redemption.redeemed) {
       document.getElementById('step-trainer').classList.add('hidden');
       document.getElementById('redeemed-trainer').textContent = trainerName;
@@ -203,14 +224,10 @@ function init() {
       document.getElementById('redeemed-proceed').onclick = () => {
         proceedWithRedeem(code, trainerName, redeemUrl);
       };
-      document.getElementById('redeemed-cancel').onclick = () => {
-        document.getElementById('step-already-redeemed').classList.add('hidden');
-        document.getElementById('step-trainer').classList.remove('hidden');
-      };
+      document.getElementById('redeemed-cancel').onclick = () => backToForm('step-already-redeemed');
       return;
     }
 
-    const cooldown = await checkCooldown(trainerName, scriptUrl);
     if (cooldown && cooldown.count >= 2) {
       const oldest = new Date(cooldown.recentCodes[0].timestamp);
       const cooldownEnd = new Date(oldest.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -225,10 +242,7 @@ function init() {
         document.getElementById('cooldown-proceed').onclick = () => {
           proceedWithRedeem(code, trainerName, redeemUrl);
         };
-        document.getElementById('cooldown-cancel').onclick = () => {
-          document.getElementById('step-cooldown').classList.add('hidden');
-          document.getElementById('step-trainer').classList.remove('hidden');
-        };
+        document.getElementById('cooldown-cancel').onclick = () => backToForm('step-cooldown');
         return;
       }
     }
