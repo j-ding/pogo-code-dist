@@ -15,7 +15,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 17;
+var SCRIPT_VERSION = 18;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
@@ -120,7 +120,7 @@ function handleGet(e) {
     } catch (err) {
       return jsonOut({ error: 'Invalid codes JSON' });
     }
-    return jsonOut(addCodes(list));
+    return jsonOut(addCodes(list, e.parameter.source === 'sync'));
   }
 
   var p = e.parameter;
@@ -451,9 +451,13 @@ function renameGroup(oldName, newName) {
 function deleteGroup(group) {
   group = String(group).trim();
   return withLock(function() {
+    var deletedCodes = [];
     var removed = deleteRowsWhere(getCodesSheet(), function(row) {
-      return String(row[1] || '').trim() === group;
+      var match = String(row[1] || '').trim() === group;
+      if (match) deletedCodes.push(row[0]);
+      return match;
     });
+    recordDeletedCodes(deletedCodes);
     var groupsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Groups');
     deleteRowsWhere(groupsSheet, function(row) { return String(row[0] || '').trim() === group; });
     return { success: true, removed: removed, groups: groupsResponse() };
@@ -560,22 +564,75 @@ function getCodesSheet() {
   return sheet;
 }
 
-function addCodes(list) {
-  var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
+// DeletedCodes tab: Code | Deleted At. Remembers deletions so a device with a stale copy can't
+// re-upload a code during Sync. Adding the code again by hand clears it from this list.
+function deletedCodesSheet(create) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('DeletedCodes');
+  if (!sheet && create) {
+    sheet = ss.insertSheet('DeletedCodes');
+    sheet.appendRow(['Code', 'Deleted At']);
+  }
+  return sheet;
+}
+
+function readDeletedCodes() {
+  var sheet = deletedCodesSheet(false);
+  var set = {};
+  if (!sheet) return set;
+  sheet.getDataRange().getValues().slice(1).forEach(function(r) {
+    var code = String(r[0] || '').trim().toUpperCase();
+    if (code) set[code] = true;
+  });
+  return set;
+}
+
+function recordDeletedCodes(codes) {
+  var already = readDeletedCodes();
+  var now = new Date().toISOString();
+  var rows = [];
+  codes.forEach(function(c) {
+    var code = String(c || '').trim().toUpperCase();
+    if (code && !already[code]) {
+      already[code] = true;
+      rows.push([code, now]);
+    }
+  });
+  if (!rows.length) return;
+  var sheet = deletedCodesSheet(true);
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 2).setValues(rows);
+}
+
+function forgetDeletedCodes(codes) {
+  var sheet = deletedCodesSheet(false);
+  if (!sheet || !codes.length) return;
+  var targets = {};
+  codes.forEach(function(c) { targets[String(c).trim().toUpperCase()] = true; });
+  deleteRowsWhere(sheet, function(r) { return targets[String(r[0] || '').trim().toUpperCase()]; });
+}
+
+// fromSync: the upload came from a device's background Sync rather than the Add Code form, so codes that
+// were deleted elsewhere are refused and reported back for the device to drop.
+function addCodes(list, fromSync) {
+  return withLock(function() {
     var sheet = getCodesSheet();
     var existing = {};
     var rows = sheet.getDataRange().getValues();
     for (var i = 1; i < rows.length; i++) {
       existing[String(rows[i][0]).trim().toUpperCase()] = true;
     }
+    var deleted = readDeletedCodes();
 
     var newRows = [];
+    var refused = [];
     for (var j = 0; j < list.length; j++) {
       var c = list[j];
       var code = String(c.code || '').trim().toUpperCase();
       if (!code || existing[code]) continue;
+      if (fromSync && deleted[code]) {
+        refused.push(code);
+        continue;
+      }
       existing[code] = true;
       newRows.push([
         code,
@@ -588,65 +645,42 @@ function addCodes(list) {
 
     if (newRows.length) {
       sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 5).setValues(newRows);
+      if (!fromSync) forgetDeletedCodes(newRows.map(function(r) { return r[0]; }));
     }
-    return { success: true, added: newRows.length, skipped: list.length - newRows.length };
-  } finally {
-    lock.releaseLock();
-  }
+    return { success: true, added: newRows.length, skipped: list.length - newRows.length, deleted: refused };
+  });
 }
 
 function addCode(data) {
-  return jsonOut(addCodes([data]));
+  return jsonOut(addCodes([data], false));
 }
 
 function updateCode(data) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('Codes');
-  if (!sheet || !data.code) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ success: false, error: 'No sheet or code' }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-
-  var rows = sheet.getDataRange().getValues();
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]) === String(data.code)) {
-      if (typeof data.active !== 'undefined') {
-        sheet.getRange(i + 1, 5).setValue(data.active ? 'Yes' : 'No');
+  var target = String(data.code || '').trim().toUpperCase();
+  if (!target) return jsonOut({ success: false, error: 'No code given' });
+  return jsonOut(withLock(function() {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
+    if (!sheet) return { success: false, error: 'Code not found' };
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]).trim().toUpperCase() === target) {
+        if (typeof data.active !== 'undefined') sheet.getRange(i + 1, 5).setValue(data.active ? 'Yes' : 'No');
+        return { success: true };
       }
-      return ContentService
-        .createTextOutput(JSON.stringify({ success: true }))
-        .setMimeType(ContentService.MimeType.JSON);
     }
-  }
-
-  return ContentService
-    .createTextOutput(JSON.stringify({ success: false, error: 'Code not found' }))
-    .setMimeType(ContentService.MimeType.JSON);
+    return { success: false, error: 'Code not found. It may have been deleted on another device. Tap Sync.' };
+  }));
 }
 
 function removeCodeFromSheet(data) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('Codes');
-  if (!sheet || !data.code) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ success: false, error: 'No sheet or code' }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-
-  var rows = sheet.getDataRange().getValues();
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]) === String(data.code)) {
-      sheet.deleteRow(i + 1);
-      return ContentService
-        .createTextOutput(JSON.stringify({ success: true }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-  }
-
-  return ContentService
-    .createTextOutput(JSON.stringify({ success: false, error: 'Code not found' }))
-    .setMimeType(ContentService.MimeType.JSON);
+  var target = String(data.code || '').trim().toUpperCase();
+  if (!target) return jsonOut({ success: false, error: 'No code given' });
+  return jsonOut(withLock(function() {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
+    var removed = deleteRowsWhere(sheet, function(r) { return String(r[0]).trim().toUpperCase() === target; });
+    recordDeletedCodes([target]);
+    return { success: true, removed: removed };
+  }));
 }
 
 function getLogs() {

@@ -96,8 +96,15 @@ function activateTab(name) {
   try { localStorage.setItem('pogo_active_tab', name); } catch {}
   if (name !== 'display' && typeof stopDisplayPolling === 'function') stopDisplayPolling();
 
-  if (name === 'active-codes') renderCodesList();
-  if (name === 'display') initDisplay();
+  // Show the cached list right away, then refresh from the sheet so changes from other devices appear.
+  if (name === 'active-codes') {
+    renderCodesList();
+    refreshCodesQuietly().then(changed => { if (changed && activeTabName() === 'active-codes') renderCodesList(); });
+  }
+  if (name === 'display') {
+    initDisplay();
+    refreshCodesQuietly().then(changed => { if (changed && activeTabName() === 'display') initDisplay(); });
+  }
   if (name === 'settings') {
     loadScanLog();
     initCommunity();
@@ -1645,7 +1652,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 17;
+const REQUIRED_SCRIPT_VERSION = 18;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -1683,8 +1690,10 @@ async function checkScriptVersion() {
 }
 
 // Requests are chunked to keep URLs short and run one at a time so Apps Script doesn't drop concurrent writes.
-async function pushCodesToSheet(entries) {
+// fromSync marks a background upload: the sheet then refuses codes deleted on another device and lists them.
+async function pushCodesToSheet(entries, fromSync) {
   let added = 0;
+  const refused = new Set();
   for (let i = 0; i < entries.length; i += 15) {
     const chunk = entries.slice(i, i + 15).map(e => ({
       code: e.code,
@@ -1693,43 +1702,63 @@ async function pushCodesToSheet(entries) {
       addedAt: e.addedAt || '',
       active: e.active !== false,
     }));
-    const data = await callSheet({ action: 'addCodes', codes: JSON.stringify(chunk) });
+    const params = { action: 'addCodes', codes: JSON.stringify(chunk) };
+    if (fromSync) params.source = 'sync';
+    const data = await callSheet(params);
     added += data.added || 0;
+    (data.deleted || []).forEach(c => refused.add(String(c).toUpperCase()));
   }
-  return added;
+  return { added, refused };
 }
 
-// The sheet is the source of truth. Only codes added on this device that never reached the sheet
-// (marked pending) are uploaded; anything else missing from the sheet was deleted elsewhere and is dropped.
+// The sheet is the source of truth. The only local codes uploaded are ones added on this device whose
+// upload never finished (pending). Anything else missing from the sheet was deleted elsewhere, so it's dropped.
 async function syncCodesFromSheet() {
   await checkScriptVersion();
 
   const data = await callSheet({ action: 'getCodes' });
   saveGroupStates(data.groups);
   const sheetCodes = (data.codes || []).map(c => ({
-    code: String(c.code),
+    code: String(c.code).trim().toUpperCase(),
     label: c.label || '',
     expiry: c.expiry || null,
     addedAt: c.addedAt || '',
     active: c.active !== false,
   }));
 
-  // Codes saved before this version have no pending flag, so upload any local-only ones once.
-  let migrated = false;
-  try { migrated = localStorage.getItem('pogo_codes_migrated') === '1'; } catch {}
-
   const sheetSet = new Set(sheetCodes.map(c => c.code));
-  const toUpload = getCodes().filter(c => !sheetSet.has(c.code) && (c.pending || !migrated));
-  const pushed = toUpload.length ? await pushCodesToSheet(toUpload) : 0;
-  try { localStorage.setItem('pogo_codes_migrated', '1'); } catch {}
+  const toUpload = getCodes().filter(c => c.pending && !sheetSet.has(String(c.code).toUpperCase()));
+  let pushed = 0;
+  let kept = [];
+  if (toUpload.length) {
+    const result = await pushCodesToSheet(toUpload, true);
+    pushed = result.added;
+    kept = toUpload.filter(c => !result.refused.has(String(c.code).toUpperCase())).map(c => ({ ...c, pending: false }));
+  }
 
-  saveCodes([...toUpload.map(c => ({ ...c, pending: false })), ...sheetCodes]);
+  saveCodes([...kept, ...sheetCodes]);
   return { fromSheet: sheetCodes.length, pushed };
 }
 
 function markCodesSaved(entries) {
   const saved = new Set(entries.map(e => e.code));
   saveCodes(getCodes().map(c => saved.has(c.code) ? { ...c, pending: false } : c));
+}
+
+function activeTabName() {
+  const tab = document.querySelector('.tab.active');
+  return tab ? tab.dataset.tab : '';
+}
+
+// Background refresh used when opening code tabs; returns whether anything changed.
+async function refreshCodesQuietly() {
+  const before = localStorage.getItem(STORAGE_KEYS.CODES) + '|' + localStorage.getItem(STORAGE_KEYS.GROUPS);
+  try {
+    await syncCodesFromSheet();
+  } catch {
+    return false;
+  }
+  return before !== localStorage.getItem(STORAGE_KEYS.CODES) + '|' + localStorage.getItem(STORAGE_KEYS.GROUPS);
 }
 
 async function syncAndRender(silent) {
