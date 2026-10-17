@@ -15,7 +15,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 12;
+var SCRIPT_VERSION = 15;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
@@ -133,6 +133,22 @@ function handleGet(e) {
     return logScan(p);
   }
 
+  if (action === 'getCodeStatus') {
+    return jsonOut(getCodeStatus(p.code || ''));
+  }
+
+  if (action === 'setGroupEnabled') {
+    return jsonOut(setGroupEnabled(p.group || '', p.enabled === 'true'));
+  }
+
+  if (action === 'renameGroup') {
+    return jsonOut(renameGroup(p.oldName || '', p.newName || ''));
+  }
+
+  if (action === 'setCodeGroup') {
+    return jsonOut(setCodeGroup(p.code || '', p.group || ''));
+  }
+
   if (action === 'getTrainerHistory') {
     return jsonOut({ trainers: getTrainerHistory() });
   }
@@ -163,8 +179,9 @@ function handleGet(e) {
   }
 
   if (action === 'getEventAttendees') {
-    if (!findEvent(p.id || '')) return jsonOut({ error: 'Event not found' });
-    return jsonOut({ attendees: eventAttendees(p.id) });
+    var attendeeEvent = findEvent(p.id || '');
+    if (!attendeeEvent) return jsonOut({ error: 'Event not found' });
+    return jsonOut({ attendees: withRedeemedCodes(attendeeEvent.event, eventAttendees(p.id)) });
   }
 
   if (action === 'removeAttendee') {
@@ -355,6 +372,100 @@ function logScanLocked(data) {
   }
 
   return jsonOut({ success: true, repeat: isRepeat });
+}
+
+// ---------- Code groups ----------
+// A code's group is its Label. Groups tab: Group | Enabled. Pausing a group is separate from a code
+// being used, so re-enabling a group never brings back codes that were already redeemed.
+
+function getGroupsSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Groups');
+  if (!sheet) {
+    sheet = ss.insertSheet('Groups');
+    sheet.appendRow(['Group', 'Enabled']);
+  }
+  return sheet;
+}
+
+function readGroups() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Groups');
+  if (!sheet) return [];
+  return sheet.getDataRange().getValues().slice(1).map(function(row, i) {
+    return { row: i + 2, name: String(row[0] || '').trim(), enabled: row[1] !== 'No' };
+  });
+}
+
+function groupsResponse() {
+  return readGroups().map(function(g) { return { name: g.name, enabled: g.enabled }; });
+}
+
+function setGroupEnabled(group, enabled) {
+  group = String(group).trim();
+  return withLock(function() {
+    var sheet = getGroupsSheet();
+    var existing = readGroups().filter(function(g) { return g.name === group; })[0];
+    if (existing) sheet.getRange(existing.row, 2).setValue(enabled ? 'Yes' : 'No');
+    else sheet.appendRow([group, enabled ? 'Yes' : 'No']);
+    return { success: true, groups: groupsResponse() };
+  });
+}
+
+function renameGroup(oldName, newName) {
+  oldName = String(oldName).trim();
+  newName = String(newName).trim().slice(0, 60);
+  if (!newName) return { error: 'Group name is required' };
+
+  return withLock(function() {
+    var codes = getCodesSheet();
+    var renamed = 0;
+    if (codes.getLastRow() > 1) {
+      var labels = codes.getRange(2, 2, codes.getLastRow() - 1, 1).getValues();
+      for (var i = 0; i < labels.length; i++) {
+        if (String(labels[i][0] || '').trim() === oldName) {
+          codes.getRange(i + 2, 2).setValue(newName);
+          renamed++;
+        }
+      }
+    }
+    var groups = readGroups();
+    var from = groups.filter(function(g) { return g.name === oldName; })[0];
+    var into = groups.filter(function(g) { return g.name === newName; })[0];
+    if (from && into) getGroupsSheet().deleteRow(from.row);
+    else if (from) getGroupsSheet().getRange(from.row, 1).setValue(newName);
+    return { success: true, renamed: renamed, groups: groupsResponse() };
+  });
+}
+
+function setCodeGroup(code, group) {
+  var target = String(code).trim().toUpperCase();
+  group = String(group).trim().slice(0, 60);
+  return withLock(function() {
+    var sheet = getCodesSheet();
+    if (sheet.getLastRow() < 2) return { error: 'Code not found' };
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    for (var i = 0; i < values.length; i++) {
+      if (String(values[i][0]).trim().toUpperCase() === target) {
+        sheet.getRange(i + 2, 2).setValue(group);
+        return { success: true };
+      }
+    }
+    return { error: 'Code not found' };
+  });
+}
+
+// Polled by the Display tab every few seconds, so it only reads the Codes column it needs.
+function getCodeStatus(code) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
+  var target = String(code).trim().toUpperCase();
+  if (!sheet || !target || sheet.getLastRow() < 2) return { code: target, exists: false, active: false };
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]).trim().toUpperCase() === target) {
+      return { code: target, exists: true, active: rows[i][4] !== 'No' };
+    }
+  }
+  return { code: target, exists: false, active: false };
 }
 
 function deactivateCodeAfterRedeem(code) {
@@ -550,9 +661,7 @@ function getCodesFromSheet() {
     });
   }
 
-  return ContentService
-    .createTextOutput(JSON.stringify({ codes: codes }))
-    .setMimeType(ContentService.MimeType.JSON);
+  return jsonOut({ codes: codes, groups: groupsResponse() });
 }
 
 function logError(data) {
@@ -851,12 +960,33 @@ function removeAttendee(id, trainerName) {
   var key = trainerKey(trainerName);
   if (!key) return { error: 'Trainer name is required' };
   return withLock(function() {
-    if (!findEvent(id)) return { error: 'Event not found' };
+    var found = findEvent(id);
+    if (!found) return { error: 'Event not found' };
     deleteRowsWhere(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CheckIns'), function(r) {
       return String(r[1]) === id && trainerKey(r[2]) === key;
     });
-    return { success: true, attendees: eventAttendees(id) };
+    return { success: true, attendees: withRedeemedCodes(found.event, eventAttendees(id)) };
   });
+}
+
+// Adds the codes each attendee redeemed during the event (from the ScanLog), so an admin can reactivate
+// one if the trainer's redemption didn't actually go through.
+function withRedeemedCodes(ev, attendees) {
+  var byKey = {};
+  attendees.forEach(function(a) { a.codes = []; byKey[trainerKey(a.trainerName)] = a; });
+  var scanSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('ScanLog');
+  if (!scanSheet) return attendees;
+
+  var w = eventWindow(ev);
+  scanSheet.getDataRange().getValues().slice(1).forEach(function(row) {
+    var a = byKey[trainerKey(row[2])];
+    var ts = new Date(row[0]);
+    if (!a || !row[1] || isNaN(ts.getTime()) || ts < w.since || ts >= w.until) return;
+    var code = String(row[1]).trim().toUpperCase();
+    if (a.codes.some(function(c) { return c.code === code; })) return;
+    a.codes.push({ code: code, timestamp: ts.toISOString() });
+  });
+  return attendees;
 }
 
 function checkIn(id, trainerName, deviceId) {

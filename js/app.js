@@ -1,7 +1,32 @@
 const STORAGE_KEYS = {
   CODES: 'pogo_codes',
+  GROUPS: 'pogo_groups',
   SCRIPT_URL: 'pogo_script_url',
 };
+
+// A code's group is its label. Groups can be paused without touching whether each code was used.
+function groupOf(code) {
+  return String(code.label || '').trim();
+}
+
+function getGroupStates() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.GROUPS)) || {}; } catch { return {}; }
+}
+
+function saveGroupStates(list) {
+  const states = {};
+  (list || []).forEach(g => { states[g.name] = g.enabled !== false; });
+  try { localStorage.setItem(STORAGE_KEYS.GROUPS, JSON.stringify(states)); } catch {}
+}
+
+function isGroupEnabled(name) {
+  return getGroupStates()[name] !== false;
+}
+
+// Codes the Display tab hands out: unused and in an enabled group.
+function getDisplayCodes() {
+  return getCodes().filter(c => c.active !== false && isGroupEnabled(groupOf(c)));
+}
 
 function getCodes() {
   try {
@@ -9,14 +34,6 @@ function getCodes() {
   } catch {
     return [];
   }
-}
-
-function getActiveCodes() {
-  return getCodes().filter(c => c.active !== false);
-}
-
-function getInactiveCodes() {
-  return getCodes().filter(c => c.active === false);
 }
 
 function saveCodes(codes) {
@@ -77,6 +94,7 @@ function activateTab(name) {
   tab.classList.add('active');
   document.getElementById(name).classList.add('active');
   try { localStorage.setItem('pogo_active_tab', name); } catch {}
+  if (name !== 'display' && typeof stopDisplayPolling === 'function') stopDisplayPolling();
 
   if (name === 'active-codes') renderCodesList();
   if (name === 'display') initDisplay();
@@ -1016,8 +1034,9 @@ function renderEventAttendees() {
     list.innerHTML = '<p class="empty-state">No one has checked in yet.</p>';
     return;
   }
+  const knownCodes = new Map(getCodes().map(c => [c.code, c]));
   list.innerHTML = attendees.map(a => `
-    <div class="lottery-entrant" data-name="${escapeHtml(a.trainerName)}">
+    <div class="lottery-entrant attendee-row" data-name="${escapeHtml(a.trainerName)}">
       <span class="lottery-name">${escapeHtml(a.trainerName)}</span>
       <span class="lottery-badges">
         ${a.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : ''}
@@ -1027,11 +1046,53 @@ function renderEventAttendees() {
       <span class="lottery-entrant-actions">
         <button type="button" class="btn btn-small btn-danger" data-action="remove-attendee">Remove</button>
       </span>
+      ${(a.codes || []).length ? `<div class="attendee-codes">${a.codes.map(c => redeemedCodeChip(c, knownCodes.get(c.code))).join('')}</div>` : ''}
     </div>
   `).join('');
 }
 
+function redeemedCodeChip(scan, entry) {
+  const time = new Date(scan.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const status = !entry ? '<span class="code-status">not in your codes</span>'
+    : entry.active !== false ? '<span class="code-status is-active">active</span>'
+    : `<span class="code-status">used</span>
+       <button type="button" class="btn btn-small btn-secondary" data-action="reactivate-code" data-code="${escapeHtml(scan.code)}"
+         title="Put this code back in Active Codes if the trainer couldn't redeem it">Reactivate</button>`;
+  return `
+    <span class="attendee-code">
+      <span class="attendee-code-value">${escapeHtml(scan.code)}</span>
+      <span class="code-meta">${time}</span>
+      ${status}
+    </span>
+  `;
+}
+
+async function reactivateFromCheckIn(code) {
+  try {
+    await callSheet({ action: 'updateCode', code, active: 'true' });
+    const codes = getCodes();
+    const entry = codes.find(c => c.code === code);
+    if (entry) {
+      entry.active = true;
+      saveCodes(codes);
+    }
+    renderEventAttendees();
+    showToast(`${code} is active again`);
+  } catch (err) {
+    showToast('Could not reactivate: ' + err.message);
+  }
+}
+
 document.getElementById('event-attendees').addEventListener('click', async (e) => {
+  const reactivate = e.target.closest('[data-action="reactivate-code"]');
+  if (reactivate) {
+    const code = reactivate.dataset.code;
+    if (confirm(`Reactivate ${code}? It goes back to Active Codes so it can be handed out again.`)) {
+      reactivate.disabled = true;
+      await reactivateFromCheckIn(code);
+    }
+    return;
+  }
   const button = e.target.closest('[data-action="remove-attendee"]');
   const ev = selectedEvent();
   if (!button || !ev) return;
@@ -1303,92 +1364,214 @@ function downloadAllQRs(entries) {
   });
 }
 
-// Render codes list
+// Render codes list, grouped by label
+const COLLAPSED_GROUPS_KEY = 'pogo_collapsed_groups';
+
+function getCollapsedGroups() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_GROUPS_KEY)) || []); } catch { return new Set(); }
+}
+
+function saveCollapsedGroups(set) {
+  try { localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...set])); } catch {}
+}
+
+function groupDisplayName(name) {
+  return name || 'Ungrouped';
+}
+
+function codeMeta(entry) {
+  return [
+    entry.expiry ? `Expires: ${formatExpiry(entry.expiry)}` : null,
+    `Added: ${new Date(entry.addedAt).toLocaleDateString()}`,
+  ].filter(Boolean).join(' · ');
+}
+
+function unusedCodeItem(entry, groupEnabled) {
+  const isExpired = entry.expiry && new Date(entry.expiry) < new Date();
+  const badge = !groupEnabled ? '<span class="badge badge-inactive">Paused</span>'
+    : isExpired ? '<span class="badge badge-expired">Expired</span>'
+    : '<span class="badge badge-active">Active</span>';
+  const code = escapeHtml(entry.code);
+  return `
+    <div class="code-item${groupEnabled ? '' : ' code-item-paused'}" data-code="${code}">
+      <div class="code-item-qr" id="qr-list-${code}"></div>
+      <div class="code-item-info">
+        <div class="code-value">${code}</div>
+        <div class="code-meta">${codeMeta(entry)}</div>
+        <div>${badge}</div>
+      </div>
+      <div class="code-item-actions">
+        <button class="btn btn-small btn-secondary" onclick="copyCodeLink('${code}')">Copy Link</button>
+        <button class="btn btn-small btn-secondary" onclick="downloadCodeQR('${code}')">Download QR</button>
+        <button class="btn btn-small btn-secondary" data-code-action="move" data-code="${code}">Move</button>
+        <button class="btn btn-small btn-warning" onclick="deactivateCode('${code}')" title="Mark as handed out / redeemed">Mark Used</button>
+        <button class="btn btn-small btn-danger" onclick="removeCode('${code}')">Remove</button>
+      </div>
+    </div>
+  `;
+}
+
+function usedCodeItem(entry) {
+  const code = escapeHtml(entry.code);
+  return `
+    <div class="code-item code-item-inactive" data-code="${code}">
+      <div class="code-item-info">
+        <div class="code-value">${code}</div>
+        <div class="code-meta">${codeMeta(entry)}</div>
+        <div><span class="badge badge-inactive">Used</span></div>
+      </div>
+      <div class="code-item-actions">
+        <button class="btn btn-small btn-secondary" onclick="reactivateCode('${code}')">Reactivate</button>
+        <button class="btn btn-small btn-secondary" data-code-action="move" data-code="${code}">Move</button>
+        <button class="btn btn-small btn-danger" onclick="removeCode('${code}')">Remove</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderCodesList() {
-  const activeCodes = getActiveCodes();
-  const inactiveCodes = getInactiveCodes();
-  const activeList = document.getElementById('codes-list');
-  const inactiveList = document.getElementById('inactive-codes-list');
-  const inactiveCard = document.getElementById('inactive-codes-card');
-
-  const now = new Date();
-
-  if (activeCodes.length === 0) {
-    activeList.innerHTML = '<p class="empty-state">No active codes.</p>';
-  } else {
-    activeList.innerHTML = activeCodes.map(entry => {
-      const isExpired = entry.expiry && new Date(entry.expiry) < now;
-      const badge = isExpired
-        ? '<span class="badge badge-expired">Expired</span>'
-        : '<span class="badge badge-active">Active</span>';
-
-      const meta = [
-        entry.label,
-        entry.expiry ? `Expires: ${formatExpiry(entry.expiry)}` : null,
-        `Added: ${new Date(entry.addedAt).toLocaleDateString()}`,
-      ].filter(Boolean).join(' · ');
-
-      return `
-        <div class="code-item" data-code="${entry.code}">
-          <div class="code-item-qr" id="qr-list-${entry.code}"></div>
-          <div class="code-item-info">
-            <div class="code-value">${entry.code}</div>
-            <div class="code-meta">${meta}</div>
-            <div>${badge}</div>
-          </div>
-          <div class="code-item-actions">
-            <button class="btn btn-small btn-secondary" onclick="copyCodeLink('${entry.code}')">Copy Link</button>
-            <button class="btn btn-small btn-secondary" onclick="downloadCodeQR('${entry.code}')">Download QR</button>
-            <button class="btn btn-small btn-warning" onclick="deactivateCode('${entry.code}')">Deactivate</button>
-            <button class="btn btn-small btn-danger" onclick="removeCode('${entry.code}')">Remove</button>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  if (inactiveCodes.length === 0) {
-    inactiveCard.classList.add('hidden');
-  } else {
-    inactiveCard.classList.remove('hidden');
-    inactiveList.innerHTML = inactiveCodes.map(entry => {
-      const meta = [
-        entry.label,
-        entry.expiry ? `Expires: ${formatExpiry(entry.expiry)}` : null,
-        `Added: ${new Date(entry.addedAt).toLocaleDateString()}`,
-      ].filter(Boolean).join(' · ');
-
-      return `
-        <div class="code-item code-item-inactive" data-code="${entry.code}">
-          <div class="code-item-info">
-            <div class="code-value">${entry.code}</div>
-            <div class="code-meta">${meta}</div>
-            <div><span class="badge badge-inactive">Inactive</span></div>
-          </div>
-          <div class="code-item-actions">
-            <button class="btn btn-small btn-secondary" onclick="reactivateCode('${entry.code}')">Reactivate</button>
-            <button class="btn btn-small btn-danger" onclick="removeCode('${entry.code}')">Remove</button>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  activeCodes.forEach(entry => {
-    const el = document.getElementById(`qr-list-${entry.code}`);
-    if (el) {
-      new QRCode(el, {
-        text: getRedeemUrl(entry.code),
-        width: 80,
-        height: 80,
-        colorDark: '#1a1a2e',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M,
-      });
-    }
-  });
-
+  const list = document.getElementById('codes-list');
+  const codes = getCodes();
+  updateGroupOptions();
   updateLogFilter();
+
+  if (codes.length === 0) {
+    list.innerHTML = '<p class="empty-state">No codes added yet.</p>';
+    return;
+  }
+
+  const groups = new Map();
+  codes.forEach(c => {
+    const name = groupOf(c);
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(c);
+  });
+  const names = [...groups.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
+  const collapsed = getCollapsedGroups();
+
+  list.innerHTML = names.map(name => {
+    const items = groups.get(name);
+    const enabled = isGroupEnabled(name);
+    const unused = items.filter(c => c.active !== false);
+    const used = items.filter(c => c.active === false);
+    const esc = escapeHtml(name);
+    return `
+      <details class="code-group${enabled ? '' : ' is-paused'}" data-group="${esc}"${collapsed.has(name) ? '' : ' open'}>
+        <summary class="code-group-summary">
+          <span class="code-group-name">${escapeHtml(groupDisplayName(name))}</span>
+          <span class="badge ${enabled ? 'badge-active' : 'badge-inactive'}">${enabled ? 'Enabled' : 'Paused'}</span>
+          <span class="code-meta">${unused.length} unused · ${used.length} used</span>
+          <span class="code-group-actions">
+            <button type="button" class="btn btn-small ${enabled ? 'btn-warning' : 'btn-primary'}" data-group-action="toggle">${enabled ? 'Pause' : 'Enable'}</button>
+            <button type="button" class="btn btn-small btn-secondary" data-group-action="rename">Rename</button>
+          </span>
+        </summary>
+        <div class="codes-list code-group-body">
+          ${unused.length ? unused.map(c => unusedCodeItem(c, enabled)).join('') : '<p class="empty-state">No unused codes in this group.</p>'}
+          ${used.length ? `
+            <details class="code-group-used">
+              <summary>Used codes (${used.length})</summary>
+              <div class="codes-list">${used.map(usedCodeItem).join('')}</div>
+            </details>` : ''}
+        </div>
+      </details>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.code-group[open]').forEach(renderGroupQrs);
+}
+
+// QR thumbnails are only drawn for expanded groups, so big collapsed groups stay cheap.
+function renderGroupQrs(groupEl) {
+  groupEl.querySelectorAll('.code-item-qr:empty').forEach(el => {
+    new QRCode(el, {
+      text: getRedeemUrl(el.closest('.code-item').dataset.code),
+      width: 80,
+      height: 80,
+      colorDark: '#1a1a2e',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M,
+    });
+  });
+}
+
+function updateGroupOptions() {
+  const names = [...new Set(getCodes().map(groupOf).filter(Boolean))].sort();
+  document.getElementById('group-options').innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+}
+
+document.getElementById('codes-list').addEventListener('toggle', (e) => {
+  const group = e.target.closest && e.target.matches('.code-group') ? e.target : null;
+  if (!group) return;
+  const collapsed = getCollapsedGroups();
+  if (group.open) {
+    collapsed.delete(group.dataset.group);
+    renderGroupQrs(group);
+  } else {
+    collapsed.add(group.dataset.group);
+  }
+  saveCollapsedGroups(collapsed);
+}, true);
+
+document.getElementById('codes-list').addEventListener('click', async (e) => {
+  const groupButton = e.target.closest('[data-group-action]');
+  const codeButton = e.target.closest('[data-code-action="move"]');
+  if (groupButton) {
+    // Buttons sit inside <summary>, so stop the click from also collapsing the group.
+    e.preventDefault();
+    const name = groupButton.closest('.code-group').dataset.group;
+    if (groupButton.dataset.groupAction === 'toggle') await toggleGroup(name);
+    else await renameCodeGroup(name);
+  } else if (codeButton) {
+    await moveCodeToGroup(codeButton.dataset.code);
+  }
+});
+
+async function toggleGroup(name) {
+  const enable = !isGroupEnabled(name);
+  try {
+    const data = await callSheet({ action: 'setGroupEnabled', group: name, enabled: String(enable) });
+    saveGroupStates(data.groups);
+    renderCodesList();
+    showToast(enable
+      ? `${groupDisplayName(name)} enabled. Its unused codes are back on the Display tab.`
+      : `${groupDisplayName(name)} paused. Its codes won't show on the Display tab.`);
+  } catch (err) {
+    showToast('Could not update group: ' + err.message);
+  }
+}
+
+async function renameCodeGroup(name) {
+  const next = (prompt(`Rename group "${groupDisplayName(name)}" to:`, name) || '').trim();
+  if (!next || next === name) return;
+  try {
+    const data = await callSheet({ action: 'renameGroup', oldName: name, newName: next });
+    saveCodes(getCodes().map(c => groupOf(c) === name ? { ...c, label: next } : c));
+    saveGroupStates(data.groups);
+    renderCodesList();
+    showToast(`Renamed to ${next}`);
+  } catch (err) {
+    showToast('Could not rename group: ' + err.message);
+  }
+}
+
+async function moveCodeToGroup(code) {
+  const entry = getCodes().find(c => c.code === code);
+  if (!entry) return;
+  const existing = [...new Set(getCodes().map(groupOf).filter(Boolean))].sort();
+  const hint = existing.length ? `\nExisting groups: ${existing.join(', ')}` : '';
+  const answer = prompt(`Move ${code} to which group? Leave blank for Ungrouped.${hint}`, groupOf(entry));
+  if (answer === null) return;
+  const group = answer.trim();
+  if (group === groupOf(entry)) return;
+  try {
+    await callSheet({ action: 'setCodeGroup', code, group });
+    saveCodes(getCodes().map(c => c.code === code ? { ...c, label: group } : c));
+    renderCodesList();
+    showToast(`${code} moved to ${groupDisplayName(group)}`);
+  } catch (err) {
+    showToast('Could not move code: ' + err.message);
+  }
 }
 
 function copyCodeLink(code) {
@@ -1415,7 +1598,7 @@ function deactivateCode(code) {
     saveCodes(codes);
     renderCodesList();
     syncUpdateToSheet(code, false);
-    showToast('Code moved to non-active');
+    showToast('Code marked used');
   }
 }
 
@@ -1440,7 +1623,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 12;
+const REQUIRED_SCRIPT_VERSION = 15;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -1500,6 +1683,7 @@ async function syncCodesFromSheet() {
   await checkScriptVersion();
 
   const data = await callSheet({ action: 'getCodes' });
+  saveGroupStates(data.groups);
   const sheetCodes = (data.codes || []).map(c => ({
     code: String(c.code),
     label: c.label || '',
@@ -1692,7 +1876,7 @@ document.getElementById('refresh-errors').addEventListener('click', loadErrorLog
 let displayIndex = 0;
 
 function initDisplay() {
-  const codes = getActiveCodes();
+  const codes = getDisplayCodes();
   if (codes.length === 0) {
     document.getElementById('display-empty').classList.remove('hidden');
     document.getElementById('display-viewer').classList.add('hidden');
@@ -1703,11 +1887,96 @@ function initDisplay() {
   document.getElementById('display-viewer').classList.remove('hidden');
   displayIndex = 0;
   renderDisplayQR();
+  startDisplayPolling();
 }
 
+// Auto-advance: while the Display tab is open, poll the code on screen. Once it's redeemed, flash
+// "Redeemed!", move to the next active code, and after the last one switch to Check In.
+const DISPLAY_AUTO_KEY = 'pogo_display_auto';
+const DISPLAY_POLL_MS = 3000;
+const displayAuto = { timer: null, busy: false };
+
+function displayAutoEnabled() {
+  return document.getElementById('display-auto').checked;
+}
+
+function setDisplayAutoStatus(text) {
+  document.getElementById('display-auto-status').textContent = text;
+}
+
+function stopDisplayPolling() {
+  clearInterval(displayAuto.timer);
+  displayAuto.timer = null;
+  setDisplayAutoStatus('');
+}
+
+function startDisplayPolling() {
+  stopDisplayPolling();
+  if (!displayAutoEnabled() || !document.getElementById('display').classList.contains('active')) return;
+  if (!getDisplayCodes().length) return;
+  setDisplayAutoStatus('watching');
+  displayAuto.timer = setInterval(pollDisplayedCode, DISPLAY_POLL_MS);
+}
+
+async function pollDisplayedCode() {
+  if (displayAuto.busy) return;
+  const codes = getDisplayCodes();
+  const entry = codes[displayIndex];
+  if (!entry) return;
+
+  displayAuto.busy = true;
+  try {
+    const status = await callSheet({ action: 'getCodeStatus', code: entry.code });
+    const current = getDisplayCodes()[displayIndex];
+    // Ignore the answer if someone swiped to a different code while the request was in flight.
+    if (!current || current.code !== entry.code || !status.exists || status.active) return;
+    await showCodeRedeemed(entry.code);
+  } catch (err) {
+    setDisplayAutoStatus('connection issue, retrying');
+  } finally {
+    displayAuto.busy = false;
+  }
+}
+
+async function showCodeRedeemed(code) {
+  const codes = getCodes();
+  const local = codes.find(c => c.code === code);
+  if (local) {
+    local.active = false;
+    saveCodes(codes);
+  }
+
+  const overlay = document.getElementById('display-redeemed');
+  overlay.classList.remove('hidden');
+  await new Promise(r => setTimeout(r, 2200));
+  overlay.classList.add('hidden');
+  if (!document.getElementById('display').classList.contains('active')) return;
+
+  if (!getDisplayCodes().length) {
+    stopDisplayPolling();
+    showToast('All codes distributed. Switching to Check In.');
+    activateTab('checkin');
+    return;
+  }
+  // The redeemed code dropped out of the active list, so the same index now points at the next one.
+  renderDisplayQR();
+  setDisplayAutoStatus('watching');
+}
+
+(function initDisplayAuto() {
+  const toggle = document.getElementById('display-auto');
+  try { toggle.checked = localStorage.getItem(DISPLAY_AUTO_KEY) === '1'; } catch {}
+  toggle.addEventListener('change', () => {
+    try { localStorage.setItem(DISPLAY_AUTO_KEY, toggle.checked ? '1' : '0'); } catch {}
+    if (toggle.checked) startDisplayPolling();
+    else stopDisplayPolling();
+  });
+})();
+
 function renderDisplayQR() {
-  const codes = getActiveCodes();
+  const codes = getDisplayCodes();
   if (codes.length === 0) return;
+  document.getElementById('display-redeemed').classList.add('hidden');
 
   if (displayIndex < 0) displayIndex = codes.length - 1;
   if (displayIndex >= codes.length) displayIndex = 0;

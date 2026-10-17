@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.0.2">
+  <meta name="app-version" content="2.3.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.0.2">
+  <link rel="stylesheet" href="css/style.css?v=2.3.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -78,8 +78,10 @@
               <textarea id="code-bulk" rows="4" placeholder="CODE1, CODE2, CODE3"></textarea>
             </div>
             <div class="form-group">
-              <label for="code-label">Label (optional)</label>
-              <input type="text" id="code-label" placeholder="e.g. October 2026 Community Day">
+              <label for="code-label">Group (optional)</label>
+              <input type="text" id="code-label" list="group-options" placeholder="e.g. Nov 2026 batch, or Test" maxlength="60" autocomplete="off">
+              <datalist id="group-options"></datalist>
+              <small>Codes with the same group can be paused or enabled together on the Active Codes tab.</small>
             </div>
             <div class="form-group">
               <label for="code-expiry">Expiry Date (optional)</label>
@@ -107,17 +109,12 @@
       <section id="active-codes" class="tab-content">
         <div class="card">
           <div class="codes-header">
-            <h2>Active Codes</h2>
+            <h2>Codes</h2>
             <button id="sync-codes" class="btn btn-small btn-secondary" onclick="syncAndRender()">Sync</button>
           </div>
-          <div id="codes-list" class="codes-list">
+          <p class="card-note">Codes are grouped by their Group. Paused groups stay off the Display tab without marking their codes used.</p>
+          <div id="codes-list" class="code-groups">
             <p class="empty-state">No codes added yet.</p>
-          </div>
-        </div>
-        <div class="card" id="inactive-codes-card">
-          <h2>Non-Active Codes</h2>
-          <div id="inactive-codes-list" class="codes-list">
-            <p class="empty-state">No non-active codes.</p>
           </div>
         </div>
       </section>
@@ -128,11 +125,22 @@
           <p class="empty-state">No codes to display. Add codes first.</p>
         </div>
         <div id="display-viewer" class="display-viewer hidden">
-          <div class="display-counter">
-            <span id="display-pos">1</span> / <span id="display-total">1</span>
+          <div class="display-topbar">
+            <div class="display-counter">
+              <span id="display-pos">1</span> / <span id="display-total">1</span>
+            </div>
+            <label class="display-auto" title="When the code on screen gets redeemed, show Redeemed and move to the next one. After the last code, switch to the Check In tab.">
+              <input type="checkbox" id="display-auto">
+              <span>Auto-advance</span>
+              <span id="display-auto-status" class="code-meta"></span>
+            </label>
           </div>
           <div class="display-swipe-area" id="display-swipe">
             <div class="display-qr-wrapper">
+              <div id="display-redeemed" class="display-redeemed hidden" aria-live="assertive">
+                <span class="display-redeemed-check" aria-hidden="true">&#10003;</span>
+                <span>Redeemed!</span>
+              </div>
               <div id="display-qr"></div>
               <div class="display-code" id="display-code-text"></div>
               <div class="display-label" id="display-label-text"></div>
@@ -394,13 +402,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.0.2</span>
+      <span>v2.3.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.0.2"></script>
-  <script src="js/error-logger.js?v=2.0.2"></script>
-  <script src="js/auth.js?v=2.0.2"></script>
-  <script src="js/app.js?v=2.0.2"></script>
+  <script src="js/site-config.js?v=2.3.0"></script>
+  <script src="js/error-logger.js?v=2.3.0"></script>
+  <script src="js/auth.js?v=2.3.0"></script>
+  <script src="js/app.js?v=2.3.0"></script>
 </body>
 </html>
