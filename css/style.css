@@ -16,6 +16,9 @@
   --gold: #a16207;
   --gold-bg: #fef3c7;
   --gold-border: #f59e0b;
+  --switch-on: #10b981;
+  --switch-off: #e5e7eb;
+  --switch-off-border: #d1d5db;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
   --radius: 10px;
@@ -41,6 +44,9 @@
     --gold: #fbbf24;
     --gold-bg: #3a2c0b;
     --gold-border: #d4a017;
+    --switch-on: #10b981;
+    --switch-off: #30363d;
+    --switch-off-border: #484f58;
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
   }
@@ -64,6 +70,9 @@
   --gold: #fbbf24;
   --gold-bg: #3a2c0b;
   --gold-border: #d4a017;
+  --switch-on: #10b981;
+  --switch-off: #30363d;
+  --switch-off-border: #484f58;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
@@ -120,6 +129,17 @@
 .checkbox-group input[type="checkbox"] {
   width: auto;
   accent-color: var(--accent);
+}
+
+.remember-name input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.remember-name label {
+  padding: 4px 0;
+  font-size: 0.9rem;
 }
 
 .login-error {
@@ -1185,10 +1205,51 @@ header h1 {
   cursor: pointer;
 }
 
-.display-auto input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--accent);
+/* Slide switch built on a real checkbox, so keyboard and screen readers still work. */
+.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 46px;
+  height: 26px;
+  margin: 0;
+  border: 1px solid var(--switch-off-border);
+  border-radius: 999px;
+  background: var(--switch-off);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease;
+}
+
+.switch:checked {
+  background: var(--switch-on);
+  border-color: var(--switch-on);
+}
+
+.switch:checked::before {
+  transform: translateX(20px);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch, .switch::before { transition: none; }
 }
 
 .display-auto .code-meta {

@@ -89,6 +89,7 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
     return;
   }
 
+  rememberTrainerName('remember-name', trainerName);
   const button = document.getElementById('checkin-submit');
   button.disabled = true;
   button.textContent = 'Checking in...';
@@ -133,4 +134,5 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
   }
 });
 
+setupRememberedName('checkin-trainer', 'remember-name');
 initCheckInPage();

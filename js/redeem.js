@@ -183,6 +183,7 @@ function init() {
   }
 
   const redeemUrl = POGO_REDEEM_BASE + encodeURIComponent(code);
+  setupRememberedName('trainer-name', 'remember-name');
   document.getElementById('display-code').textContent = code;
   document.getElementById('manual-link').href = redeemUrl;
 
@@ -208,6 +209,7 @@ function init() {
     const trainerName = document.getElementById('trainer-name').value.trim();
     if (!trainerName) return;
 
+    rememberTrainerName('remember-name', trainerName);
     setRedeeming(true);
     const scriptUrl = getScriptUrl();
 

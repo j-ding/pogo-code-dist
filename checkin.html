@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.4.1">
+  <meta name="app-version" content="2.5.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Event Check-In - PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.4.1">
+  <link rel="stylesheet" href="css/style.css?v=2.5.0">
 </head>
 <body>
   <div class="container redeem-container">
@@ -34,6 +34,9 @@
           <label for="checkin-trainer">Trainer Name</label>
           <input type="text" id="checkin-trainer" placeholder="Your trainer name" pattern="\s*[A-Za-z0-9][A-Za-z0-9\s]*" title="Letters and numbers only" autocapitalize="off" autocomplete="off" spellcheck="false" required>
         </div>
+        <div class="form-group checkbox-group remember-name">
+          <label><input type="checkbox" id="remember-name"> Remember my trainer name on this device</label>
+        </div>
         <p id="checkin-error" class="login-error hidden"></p>
         <button type="submit" id="checkin-submit" class="btn btn-primary btn-large">Check In</button>
       </form>
@@ -45,8 +48,9 @@
     </section>
   </div>
 
-  <script src="js/site-config.js?v=2.4.1"></script>
-  <script src="js/error-logger.js?v=2.4.1"></script>
-  <script src="js/checkin.js?v=2.4.1"></script>
+  <script src="js/site-config.js?v=2.5.0"></script>
+  <script src="js/error-logger.js?v=2.5.0"></script>
+  <script src="js/trainer-memory.js?v=2.5.0"></script>
+  <script src="js/checkin.js?v=2.5.0"></script>
 </body>
 </html>
