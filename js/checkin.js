@@ -96,6 +96,11 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
 
   try {
     const data = await callScript({ action: 'checkIn', id: eventId, trainerName, deviceId: getDeviceId() });
+    if (data.busy) {
+      showError('Lots of people are checking in right now. Please tap Check In again.');
+      resetButton();
+      return;
+    }
     if (data.closed) {
       showUnavailable('Check-In Closed', `Check-in for "${eventName}" is closed.`);
       return;

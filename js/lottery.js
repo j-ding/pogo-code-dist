@@ -90,6 +90,12 @@ document.getElementById('lottery-form').addEventListener('submit', async (e) => 
 
   try {
     const data = await callScript({ action: 'joinLottery', id: lotteryId, trainerName, deviceId: getDeviceId() });
+    if (data.busy) {
+      showError('Lots of people are signing up right now. Please tap Enter Lottery again.');
+      button.disabled = false;
+      button.textContent = 'Enter Lottery';
+      return;
+    }
     if (data.closed) {
       showUnavailable('Lottery Closed', `"${lotteryName}" is no longer accepting entries.`);
       return;

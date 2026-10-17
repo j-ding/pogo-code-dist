@@ -145,15 +145,32 @@ function proceedWithRedeem(code, trainerName, redeemUrl) {
       screenResolution: screenRes,
       referrer: document.referrer || 'direct',
       deviceId: getDeviceId(),
+      scanId: newScanId(),
     };
 
-    const scriptUrl = getScriptUrl();
-    if (scriptUrl) {
-      navigator.sendBeacon(scriptUrl, JSON.stringify(logData));
-    }
-
-    window.location.href = redeemUrl;
+    sendScanLog(logData).finally(() => {
+      window.location.href = redeemUrl;
+    });
   });
+}
+
+function newScanId() {
+  try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+}
+
+// Wait briefly for a confirmed save; if that fails or is slow, fall back to a beacon (the scan ID dedupes it).
+async function sendScanLog(logData) {
+  const scriptUrl = getScriptUrl();
+  if (!scriptUrl) return;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch(`${scriptUrl}?${new URLSearchParams(logData)}`, { signal: controller.signal });
+    clearTimeout(timeout);
+    const data = await res.json();
+    if (data.success) return;
+  } catch {}
+  try { navigator.sendBeacon(scriptUrl, JSON.stringify(logData)); } catch {}
 }
 
 function init() {

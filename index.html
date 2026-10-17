@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="1.9.0">
+  <meta name="app-version" content="2.0.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=1.9.0">
+  <link rel="stylesheet" href="css/style.css?v=2.0.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -31,7 +31,7 @@
             <input type="checkbox" id="login-remember"> Remember me
           </label>
         </div>
-        <p id="login-error" class="login-error hidden">Invalid username or password.</p>
+        <p id="login-error" class="login-error hidden"></p>
         <button type="submit" class="btn btn-primary btn-large">Log In</button>
       </form>
     </div>
@@ -42,7 +42,7 @@
     <header>
       <h1>PoGo Code Dist</h1>
       <p class="subtitle">Pokemon Go Code Distribution</p>
-      <button id="logout-btn" class="btn btn-small btn-secondary logout-btn" onclick="clearSession(); showLogin();">Log Out</button>
+      <button id="logout-btn" class="btn btn-small btn-secondary logout-btn" onclick="logout()">Log Out</button>
     </header>
 
     <section id="setup-banner" class="banner hidden">
@@ -56,6 +56,7 @@
       <button class="tab" data-tab="scan-log">Scan Log</button>
       <button class="tab" data-tab="checkin">Check In</button>
       <button class="tab" data-tab="lottery">Lottery</button>
+      <button class="tab" data-tab="trainers">Trainers</button>
       <button class="tab" data-tab="community">Community</button>
       <button class="tab" data-tab="settings">Settings</button>
     </nav>
@@ -254,6 +255,23 @@
 
           <div id="lottery-winner-banner" class="winner-banner hidden"></div>
 
+          <details id="lottery-rules" class="lottery-rules">
+            <summary>Draw rules <span id="lottery-rules-summary" class="code-meta"></span></summary>
+            <p class="card-note">These only apply to this lottery. Excluded trainers stay on the list but can't be drawn.</p>
+            <label class="rule-row">
+              <span>Exclude winners from the last</span>
+              <select id="lottery-rule-recent" class="inline-date">
+                <option value="0">0 (off)</option><option value="1">1</option><option value="2">2</option>
+                <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+              </select>
+              <span>events</span>
+            </label>
+            <div class="rule-row rule-lotteries">
+              <span>Also exclude winners of:</span>
+              <div id="lottery-rule-lotteries" class="rule-checks"></div>
+            </div>
+          </details>
+
           <div class="lottery-toolbar">
             <h3>Entrants <span id="lottery-count" class="count-pill">0</span></h3>
             <div class="lottery-toolbar-actions">
@@ -281,6 +299,22 @@
           <h2>History</h2>
           <div id="lottery-history" class="lottery-history">
             <p class="empty-state">No lotteries yet.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Trainers Tab -->
+      <section id="trainers" class="tab-content">
+        <div class="card">
+          <div class="codes-header">
+            <h2>Trainers <span id="trainer-count" class="count-pill">0</span></h2>
+            <button id="trainer-refresh" class="btn btn-small btn-secondary">Refresh</button>
+          </div>
+          <div class="form-group">
+            <input type="search" id="trainer-search" placeholder="Search trainer names" autocomplete="off" aria-label="Search trainers">
+          </div>
+          <div id="trainer-list" class="trainer-list">
+            <p class="empty-state">Loading trainers...</p>
           </div>
         </div>
       </section>
@@ -361,13 +395,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v1.9.0</span>
+      <span>v2.0.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=1.9.0"></script>
-  <script src="js/error-logger.js?v=1.9.0"></script>
-  <script src="js/auth.js?v=1.9.0"></script>
-  <script src="js/app.js?v=1.9.0"></script>
+  <script src="js/site-config.js?v=2.0.0"></script>
+  <script src="js/error-logger.js?v=2.0.0"></script>
+  <script src="js/auth.js?v=2.0.0"></script>
+  <script src="js/app.js?v=2.0.0"></script>
 </body>
 </html>

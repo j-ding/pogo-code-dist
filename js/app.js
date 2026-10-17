@@ -84,7 +84,68 @@ function activateTab(name) {
   if (name === 'checkin') initCheckIn();
   if (name === 'lottery') initLottery();
   if (name === 'community') initCommunity();
+  if (name === 'trainers') loadTrainers();
 }
+
+// Trainers
+let trainerHistory = [];
+
+async function loadTrainers() {
+  const list = document.getElementById('trainer-list');
+  if (!trainerHistory.length) list.innerHTML = '<p class="empty-state">Loading trainers...</p>';
+  try {
+    const data = await callSheet({ action: 'getTrainerHistory' });
+    trainerHistory = data.trainers || [];
+    renderTrainers();
+  } catch (err) {
+    list.innerHTML = `<p class="empty-state">Couldn't load trainers: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function renderTrainers() {
+  const list = document.getElementById('trainer-list');
+  const query = trainerKey(document.getElementById('trainer-search').value);
+  const shown = query ? trainerHistory.filter(t => trainerKey(t.trainerName).includes(query)) : trainerHistory;
+  document.getElementById('trainer-count').textContent = trainerHistory.length;
+
+  if (!shown.length) {
+    list.innerHTML = `<p class="empty-state">${trainerHistory.length ? 'No trainers match that search.' : 'No trainers yet. They appear here after checking in or redeeming a code.'}</p>`;
+    return;
+  }
+
+  list.innerHTML = shown.map(t => {
+    const events = t.events.length
+      ? `<ul>${t.events.map(ev => `<li>${escapeHtml(ev.name)} <span class="code-meta">${new Date(ev.date).toLocaleDateString()}</span></li>`).join('')}</ul>`
+      : '<p class="code-meta">No event check-ins.</p>';
+    const wins = t.wins.length
+      ? `<ul>${t.wins.map(w => `<li>${escapeHtml(w.lottery)} <span class="code-meta">${escapeHtml(w.event || '')}${w.date ? ' · ' + new Date(w.date).toLocaleDateString() : ''}</span></li>`).join('')}</ul>`
+      : '<p class="code-meta">No lottery wins.</p>';
+    return `
+      <details class="trainer-row">
+        <summary>
+          <span class="lottery-name">${escapeHtml(t.trainerName)}</span>
+          <span class="trainer-stats">
+            <span class="badge badge-new">${plural(t.events.length, 'event')}</span>
+            <span class="badge badge-active">${plural(t.redemptions, 'code')}</span>
+            ${t.wins.length ? `<span class="badge badge-winner">${plural(t.wins.length, 'win')}</span>` : ''}
+          </span>
+          <span class="code-meta">${t.lastSeen ? 'Last seen ' + new Date(t.lastSeen).toLocaleDateString() : ''}</span>
+        </summary>
+        <div class="trainer-detail">
+          <div><h4>Events attended</h4>${events}</div>
+          <div><h4>Lottery wins</h4>${wins}</div>
+        </div>
+      </details>
+    `;
+  }).join('');
+}
+
+document.getElementById('trainer-search').addEventListener('input', renderTrainers);
+document.getElementById('trainer-refresh').addEventListener('click', loadTrainers);
 
 const COMMUNITY_LINKS = {
   discord: 'https://discord.gg/EhGPPT4sPA',
@@ -258,6 +319,7 @@ function renderLotteryHeader(lottery) {
   toggle.textContent = lottery.open ? 'Close Lottery' : 'Reopen';
   toggle.classList.toggle('hidden', !legacy);
   updateDrawButton(lottery);
+  renderLotteryRules(lottery);
 
   const banner = document.getElementById('lottery-winner-banner');
   if (lottery.winners.length) {
@@ -332,11 +394,12 @@ function renderLotteryEntrants() {
     const badges = [
       winner ? '<span class="badge badge-winner">Winner</span>' : '',
       e.skipped ? '<span class="badge badge-skipped">Skipped</span>' : '',
+      e.ineligible ? `<span class="badge badge-skipped" title="Excluded by this lottery's draw rules">${escapeHtml(e.ineligible)}</span>` : '',
       e.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : '',
       e.signedUp ? '<span class="badge badge-new">Lottery sign-up</span>' : '',
       e.checkedIn ? '<span class="badge badge-new">Checked in</span>' : '',
     ].join(' ');
-    const stateClass = winner ? ' is-winner' : e.skipped ? ' is-skipped' : '';
+    const stateClass = winner ? ' is-winner' : (e.skipped || e.ineligible) ? ' is-skipped' : '';
     const winnerActions = winner
       ? '<button type="button" class="btn btn-small btn-primary" data-action="redraw" title="Winner isn\'t here: skip them and draw someone else">Redraw</button>'
         + '<button type="button" class="btn btn-small btn-secondary" data-action="unwin">Undo Win</button>'
@@ -357,6 +420,58 @@ function renderLotteryEntrants() {
   const input = list.querySelector('.lottery-entrant-input');
   if (input) { input.focus(); input.select(); }
 }
+
+function lotteryRules(lottery) {
+  return lottery.rules || { excludeRecentEvents: 0, excludeLotteryIds: [] };
+}
+
+function renderLotteryRules(lottery) {
+  const rules = lotteryRules(lottery);
+  document.getElementById('lottery-rule-recent').value = String(rules.excludeRecentEvents);
+
+  const others = lotteryState.lotteries.filter(l => l.id !== lottery.id);
+  const box = document.getElementById('lottery-rule-lotteries');
+  box.innerHTML = others.length ? others.map(l => {
+    const source = l.eventId ? lotteryEventName(l) : new Date(l.createdAt).toLocaleDateString();
+    const checked = rules.excludeLotteryIds.includes(l.id) ? ' checked' : '';
+    return `
+      <label class="rule-check">
+        <input type="checkbox" value="${escapeHtml(l.id)}"${checked}>
+        <span>${escapeHtml(l.name)} <span class="code-meta">${escapeHtml(source)}${l.winners.length ? '' : ' · no winners yet'}</span></span>
+      </label>
+    `;
+  }).join('') : '<span class="code-meta">No other lotteries yet.</span>';
+
+  const parts = [];
+  if (rules.excludeRecentEvents) parts.push(`last ${rules.excludeRecentEvents} event${rules.excludeRecentEvents > 1 ? 's' : ''}`);
+  if (rules.excludeLotteryIds.length) parts.push(`${rules.excludeLotteryIds.length} lotter${rules.excludeLotteryIds.length > 1 ? 'ies' : 'y'}`);
+  document.getElementById('lottery-rules-summary').textContent = parts.length ? `· excluding winners from ${parts.join(' and ')}` : '· off';
+  if (parts.length) document.getElementById('lottery-rules').open = true;
+}
+
+async function saveLotteryRules() {
+  const lottery = selectedLottery();
+  if (!lottery) return;
+  const excludeRecentEvents = document.getElementById('lottery-rule-recent').value;
+  const excludeLotteryIds = [...document.querySelectorAll('#lottery-rule-lotteries input:checked')].map(i => i.value);
+  try {
+    const data = await callSheet({
+      action: 'setLotteryRules',
+      id: lottery.id,
+      excludeRecentEvents,
+      excludeLotteryIds: JSON.stringify(excludeLotteryIds),
+    });
+    applyLotteryUpdate(data);
+    const excluded = lotteryState.entrants.filter(e => e.ineligible).length;
+    showToast(excluded ? `Rules saved · ${excluded} entrant${excluded > 1 ? 's' : ''} excluded` : 'Rules saved');
+  } catch (err) {
+    showToast('Could not save rules: ' + err.message);
+    renderLotteryRules(lottery);
+  }
+}
+
+document.getElementById('lottery-rule-recent').addEventListener('change', saveLotteryRules);
+document.getElementById('lottery-rule-lotteries').addEventListener('change', saveLotteryRules);
 
 function applyLotteryUpdate(data) {
   const lottery = selectedLottery();
@@ -489,9 +604,10 @@ document.getElementById('lottery-winner-count').addEventListener('change', async
 });
 
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count'].forEach(id => {
+  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-rule-recent'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
+  document.querySelectorAll('#lottery-rule-lotteries input').forEach(i => { i.disabled = disabled; });
   document.getElementById('lottery-list').classList.toggle('is-busy', disabled);
 }
 
@@ -529,7 +645,7 @@ async function drawLotteryWinners(count) {
 
 // Returns the winner's name, or null if nothing could be drawn.
 async function drawOneWinner(lottery) {
-  const pool = lotteryState.entrants.filter(e => !e.skipped && !isWinner(lottery, e.trainerName));
+  const pool = lotteryState.entrants.filter(e => !e.skipped && !e.ineligible && !isWinner(lottery, e.trainerName));
   if (pool.length === 0) {
     showToast(lotteryState.entrants.length ? 'No one left to draw' : 'No entrants to draw from');
     return null;
@@ -964,7 +1080,7 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
         continue;
       }
       existingSet.add(code);
-      const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString() };
+      const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString(), pending: true };
       newCodes.push(entry);
       existing.unshift(entry);
     }
@@ -976,7 +1092,7 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
       generateBulkQRPreview(newCodes);
       const msg = `${newCodes.length} code(s) added` + (skipped ? `, ${skipped} skipped (duplicates)` : '');
       showToast(msg);
-      pushCodesToSheet(newCodes).catch(reportSyncError);
+      pushCodesToSheet(newCodes).then(() => markCodesSaved(newCodes)).catch(reportSyncError);
     } else {
       showToast('All codes already exist');
     }
@@ -990,13 +1106,13 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
       return;
     }
 
-    const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString() };
+    const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString(), pending: true };
     codes.unshift(entry);
     saveCodes(codes);
     generateQRPreview(code, label);
     document.getElementById('code-input').value = '';
     showToast('Code added');
-    pushCodesToSheet([entry]).catch(reportSyncError);
+    pushCodesToSheet([entry]).then(() => markCodesSaved([entry])).catch(reportSyncError);
   }
 
   document.getElementById('code-label').value = '';
@@ -1239,18 +1355,23 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 11;
+const REQUIRED_SCRIPT_VERSION = 12;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
   if (!scriptUrl) throw new Error('No script URL configured');
 
-  const query = Object.entries(params)
+  const query = Object.entries({ ...params, t: getAuthToken() })
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
 
   const res = await fetch(`${scriptUrl}?${query}`);
   const data = await res.json();
+  if (data.unauthorized) {
+    clearSession();
+    showLogin('Your session expired. Please log in again.');
+    throw new Error('Not logged in');
+  }
   if (data.error === 'Unknown action') {
     throw new Error('Apps Script is outdated — paste the latest google-apps-script.js and redeploy');
   }
@@ -1288,6 +1409,8 @@ async function pushCodesToSheet(entries) {
   return added;
 }
 
+// The sheet is the source of truth. Only codes added on this device that never reached the sheet
+// (marked pending) are uploaded; anything else missing from the sheet was deleted elsewhere and is dropped.
 async function syncCodesFromSheet() {
   await checkScriptVersion();
 
@@ -1300,12 +1423,22 @@ async function syncCodesFromSheet() {
     active: c.active !== false,
   }));
 
-  const sheetSet = new Set(sheetCodes.map(c => c.code));
-  const localOnly = getCodes().filter(c => !sheetSet.has(c.code));
-  const pushed = localOnly.length ? await pushCodesToSheet(localOnly) : 0;
+  // Codes saved before this version have no pending flag, so upload any local-only ones once.
+  let migrated = false;
+  try { migrated = localStorage.getItem('pogo_codes_migrated') === '1'; } catch {}
 
-  saveCodes([...localOnly, ...sheetCodes]);
+  const sheetSet = new Set(sheetCodes.map(c => c.code));
+  const toUpload = getCodes().filter(c => !sheetSet.has(c.code) && (c.pending || !migrated));
+  const pushed = toUpload.length ? await pushCodesToSheet(toUpload) : 0;
+  try { localStorage.setItem('pogo_codes_migrated', '1'); } catch {}
+
+  saveCodes([...toUpload.map(c => ({ ...c, pending: false })), ...sheetCodes]);
   return { fromSheet: sheetCodes.length, pushed };
+}
+
+function markCodesSaved(entries) {
+  const saved = new Set(entries.map(e => e.code));
+  saveCodes(getCodes().map(c => saved.has(c.code) ? { ...c, pending: false } : c));
 }
 
 async function syncAndRender(silent) {
@@ -1347,8 +1480,7 @@ async function loadScanLog() {
     '<p class="empty-state">Loading scan log...</p>';
 
   try {
-    const response = await fetch(`${scriptUrl}?action=getLogs`);
-    const data = await response.json();
+    const data = await callSheet({ action: 'getLogs' });
 
     if (!data.logs || data.logs.length === 0) {
       document.getElementById('log-table-container').innerHTML =
@@ -1359,7 +1491,7 @@ async function loadScanLog() {
     renderLogTable(data.logs);
   } catch (err) {
     document.getElementById('log-table-container').innerHTML =
-      `<p class="empty-state">Error loading logs. Check your Apps Script URL.</p>`;
+      `<p class="empty-state">Error loading logs: ${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -1432,8 +1564,7 @@ async function loadErrorLog() {
     '<p class="empty-state">Loading errors...</p>';
 
   try {
-    const response = await fetch(`${scriptUrl}?action=getErrors`);
-    const data = await response.json();
+    const data = await callSheet({ action: 'getErrors' });
 
     if (!data.errors || data.errors.length === 0) {
       document.getElementById('error-log-container').innerHTML =
@@ -1576,9 +1707,10 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') { displayIndex++; renderDisplayQR(); }
 });
 
-// Runs last so every tab's state and helpers are initialized before the saved tab loads.
-(function restoreTab() {
+// Called by auth.js once a valid admin session exists (after login, or on load with a saved session).
+function onAdminReady() {
+  syncAndRender(true);
   let saved = null;
   try { saved = localStorage.getItem('pogo_active_tab'); } catch {}
-  if (saved && saved !== 'add-code') activateTab(saved);
-})();
+  activateTab(saved && document.getElementById(saved) ? saved : 'add-code');
+}

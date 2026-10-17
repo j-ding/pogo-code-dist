@@ -169,15 +169,15 @@ header h1 {
 /* Tabs */
 .tabs {
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 4px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 24px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
 }
 
 .tab {
-  padding: 10px 18px;
+  padding: 10px 14px;
   border: none;
   background: none;
   color: var(--text-secondary);
@@ -406,6 +406,132 @@ header h1 {
 
 .codes-header h2 {
   margin-bottom: 0;
+}
+
+/* Lottery draw rules */
+.lottery-rules {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.lottery-rules summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.lottery-rules .card-note {
+  margin: 10px 0;
+}
+
+.rule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+.rule-lotteries {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.rule-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  width: 100%;
+}
+
+.rule-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.rule-check input {
+  accent-color: var(--accent);
+}
+
+.rule-check .code-meta,
+.lottery-rules summary .code-meta {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+/* Trainers */
+.trainer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trainer-row {
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+}
+
+.trainer-row summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.trainer-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.trainer-row summary .lottery-name {
+  flex: 1;
+  min-width: 120px;
+}
+
+.trainer-row[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.trainer-row .code-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.trainer-stats {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.trainer-detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+}
+
+.trainer-detail h4 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.trainer-detail ul {
+  padding-left: 18px;
 }
 
 /* Community */

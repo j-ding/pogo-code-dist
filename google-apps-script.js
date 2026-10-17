@@ -7,11 +7,18 @@
  *  3. Deploy > New deployment > Web app > Execute as "Me", access "Anyone"
  *  4. Copy the URL into js/site-config.js
  *
+ *  5. Project Settings (gear icon) > Script properties > add ADMIN_USERNAME and ADMIN_PASSWORD.
+ *     These are the dashboard login and never leave Google.
+ *  6. Optional backups: pick setupWeeklyBackup in the function dropdown and click Run once.
+ *
  * Updating: paste the new code, then Deploy > Manage deployments > edit > Version: New version > Deploy.
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 11;
+var SCRIPT_VERSION = 12;
+
+// Everything else requires an admin token from login().
+var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
 
 function jsonOut(obj) {
   return ContentService
@@ -19,7 +26,87 @@ function jsonOut(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function errorResponse(err) {
+  var message = String((err && err.message) || err);
+  if (/lock/i.test(message)) {
+    return { error: 'The server is busy. Please try again in a moment.', busy: true };
+  }
+  return { error: message };
+}
+
 function doGet(e) {
+  try {
+    var params = (e && e.parameter) || {};
+    if (PUBLIC_ACTIONS.indexOf(params.action) === -1 && !isAuthorized(params.t)) {
+      return jsonOut({ error: 'Unauthorized', unauthorized: true });
+    }
+    return handleGet(e);
+  } catch (err) {
+    return jsonOut(errorResponse(err));
+  }
+}
+
+// ---------- Admin auth ----------
+
+function scriptProperty(key) {
+  return PropertiesService.getScriptProperties().getProperty(key);
+}
+
+function sessionSecret() {
+  var props = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('SESSION_SECRET');
+  if (!secret) {
+    secret = Utilities.getUuid() + Utilities.getUuid();
+    props.setProperty('SESSION_SECRET', secret);
+  }
+  return secret;
+}
+
+function signValue(value) {
+  var bytes = Utilities.computeHmacSha256Signature(String(value), sessionSecret());
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+}
+
+function safeEqual(a, b) {
+  a = String(a || '');
+  b = String(b || '');
+  if (a.length !== b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// Token = expiry timestamp + HMAC of it. Deleting the SESSION_SECRET script property logs everyone out.
+function isAuthorized(token) {
+  var parts = String(token || '').split('.');
+  if (parts.length !== 2) return false;
+  var expires = Number(parts[0]);
+  if (!expires || expires < Date.now()) return false;
+  return safeEqual(parts[1], signValue(parts[0]));
+}
+
+function login(username, password, remember) {
+  var expectedPassword = scriptProperty('ADMIN_PASSWORD');
+  if (!expectedPassword) {
+    return { error: 'Admin login is not set up. In Apps Script, open Project Settings > Script properties and add ADMIN_USERNAME and ADMIN_PASSWORD.' };
+  }
+  var expectedUser = scriptProperty('ADMIN_USERNAME') || 'admin';
+
+  var cache = CacheService.getScriptCache();
+  var failures = Number(cache.get('login_failures') || 0);
+  if (failures >= 10) return { error: 'Too many failed logins. Try again in 10 minutes.' };
+
+  if (!safeEqual(username, expectedUser) || !safeEqual(password, expectedPassword)) {
+    cache.put('login_failures', String(failures + 1), 600);
+    return { error: 'Invalid username or password' };
+  }
+  cache.remove('login_failures');
+
+  var expires = Date.now() + (remember ? 30 : 1) * 24 * 60 * 60 * 1000;
+  return { success: true, token: expires + '.' + signValue(expires), expires: expires };
+}
+
+function handleGet(e) {
   var action = e.parameter.action;
 
   if (action === 'ping') {
@@ -37,6 +124,22 @@ function doGet(e) {
   }
 
   var p = e.parameter;
+
+  if (action === 'login') {
+    return jsonOut(login(p.username || '', p.password || '', p.remember === 'true'));
+  }
+
+  if (action === 'logScan') {
+    return logScan(p);
+  }
+
+  if (action === 'getTrainerHistory') {
+    return jsonOut({ trainers: getTrainerHistory() });
+  }
+
+  if (action === 'setLotteryRules') {
+    return jsonOut(setLotteryRules(p.id || '', p.excludeRecentEvents || '0', p.excludeLotteryIds || '[]'));
+  }
 
   if (action === 'getEvents') {
     return jsonOut({ events: getEventsWithCounts() });
@@ -178,42 +281,23 @@ function doGet(e) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// POST is only used by navigator.sendBeacon from public pages, so it only accepts the two logging actions.
 function doPost(e) {
-  var data;
   try {
-    data = JSON.parse(e.postData.contents);
+    var data = JSON.parse(e.postData.contents);
+    if (data.action === 'logScan') return logScan(data);
+    if (data.action === 'logError') return logError(data);
+    return jsonOut({ error: 'Unknown action' });
   } catch (err) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ error: 'Invalid JSON' }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return jsonOut(errorResponse(err));
   }
-
-  if (data.action === 'logScan') {
-    return logScan(data);
-  }
-
-  if (data.action === 'addCode') {
-    return addCode(data);
-  }
-
-  if (data.action === 'updateCode') {
-    return updateCode(data);
-  }
-
-  if (data.action === 'removeCode') {
-    return removeCodeFromSheet(data);
-  }
-
-  if (data.action === 'logError') {
-    return logError(data);
-  }
-
-  return ContentService
-    .createTextOutput(JSON.stringify({ error: 'Unknown action' }))
-    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function logScan(data) {
+  return withLock(function() { return logScanLocked(data); });
+}
+
+function logScanLocked(data) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('ScanLog');
 
@@ -227,7 +311,22 @@ function logScan(data) {
 
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   if (headers.indexOf('Device ID') === -1) {
-    sheet.getRange(1, headers.length + 1).setValue('Device ID');
+    sheet.getRange(1, 13).setValue('Device ID');
+  }
+  if (headers.indexOf('Scan ID') === -1) {
+    sheet.getRange(1, 14).setValue('Scan ID');
+  }
+
+  // The redeem page retries over sendBeacon if the confirmed request times out, so drop repeats.
+  if (data.scanId) {
+    var lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      var start = Math.max(2, lastRow - 299);
+      var recentIds = sheet.getRange(start, 14, lastRow - start + 1, 1).getValues();
+      for (var r = 0; r < recentIds.length; r++) {
+        if (String(recentIds[r][0]) === String(data.scanId)) return jsonOut({ success: true, duplicate: true });
+      }
+    }
   }
 
   var isRepeat = checkRepeat(sheet, data.code, data.trainerName);
@@ -245,33 +344,33 @@ function logScan(data) {
     data.screenResolution || '',
     data.referrer || '',
     isRepeat ? 'Yes' : 'No',
-    data.deviceId || ''
+    data.deviceId || '',
+    data.scanId || ''
   ]);
 
-  if (data.code) {
-    deactivateCodeAfterRedeem(data.code);
-  }
-  if (data.trainerName) {
+  // Only real codes have side effects, so a forged logScan can't check people in.
+  var knownCode = data.code ? deactivateCodeAfterRedeem(data.code) : false;
+  if (knownCode && data.trainerName) {
     addRedeemerToOpenEvents(data.trainerName, data.timestamp || new Date().toISOString(), data.deviceId || '');
   }
 
-  return ContentService
-    .createTextOutput(JSON.stringify({ success: true, repeat: isRepeat }))
-    .setMimeType(ContentService.MimeType.JSON);
+  return jsonOut({ success: true, repeat: isRepeat });
 }
 
 function deactivateCodeAfterRedeem(code) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Codes');
-  if (!sheet) return;
+  if (!sheet) return false;
 
+  var target = String(code).trim().toUpperCase();
   var rows = sheet.getDataRange().getValues();
   for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]) === String(code)) {
+    if (String(rows[i][0]).trim().toUpperCase() === target) {
       sheet.getRange(i + 1, 5).setValue('No');
-      return;
+      return true;
     }
   }
+  return false;
 }
 
 function checkRepeat(sheet, code, trainerName) {
@@ -531,7 +630,8 @@ function checkCooldown(trainerName) {
     if (seen[rowCode]) continue;
     seen[rowCode] = true;
 
-    recentCodes.push({ code: rowCode, timestamp: rowTimestamp.toISOString() });
+    // Public endpoint: return timestamps only, never the code values.
+    recentCodes.push({ timestamp: rowTimestamp.toISOString() });
   }
 
   recentCodes.sort(function(a, b) { return new Date(a.timestamp) - new Date(b.timestamp); });
@@ -549,7 +649,7 @@ function toIso(value) {
 
 function withLock(fn) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  lock.waitLock(15000);
   try {
     return fn();
   } finally {
@@ -793,24 +893,23 @@ function checkIn(id, trainerName, deviceId) {
   });
 }
 
+// Caller (logScan) already holds the script lock.
 function addRedeemerToOpenEvents(trainerName, timestamp, deviceId) {
   var key = trainerKey(trainerName);
   var ts = new Date(timestamp);
   if (!key || isNaN(ts.getTime())) return;
 
-  withLock(function() {
-    var rows = checkInRows();
-    var sheet = null;
-    readEvents().forEach(function(r) {
-      var ev = r.event;
-      if (!ev.open) return;
-      var w = eventWindow(ev);
-      if (ts < w.since || ts >= w.until) return;
-      var already = rows.some(function(row) { return String(row[1]) === ev.id && trainerKey(row[2]) === key; });
-      if (already) return;
-      sheet = sheet || getCheckInsSheet();
-      sheet.appendRow([ts.toISOString(), ev.id, String(trainerName).trim(), deviceId, 'redeem']);
-    });
+  var rows = checkInRows();
+  var sheet = null;
+  readEvents().forEach(function(r) {
+    var ev = r.event;
+    if (!ev.open) return;
+    var w = eventWindow(ev);
+    if (ts < w.since || ts >= w.until) return;
+    var already = rows.some(function(row) { return String(row[1]) === ev.id && trainerKey(row[2]) === key; });
+    if (already) return;
+    sheet = sheet || getCheckInsSheet();
+    sheet.appendRow([ts.toISOString(), ev.id, String(trainerName).trim(), deviceId, 'redeem']);
   });
 }
 
@@ -825,11 +924,21 @@ function getLotteriesSheet() {
   var sheet = ss.getSheetByName('Lotteries');
   if (!sheet) {
     sheet = ss.insertSheet('Lotteries');
-    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners', 'Overrides', 'Winner Count', 'Event ID']);
-  } else if (sheet.getLastColumn() < 9) {
-    sheet.getRange(1, 7, 1, 3).setValues([['Overrides', 'Winner Count', 'Event ID']]);
+    sheet.appendRow(['Id', 'Name', 'Created At', 'Since', 'Closed At', 'Winners', 'Overrides', 'Winner Count', 'Event ID', 'Rules']);
+  } else if (sheet.getLastColumn() < 10) {
+    sheet.getRange(1, 7, 1, 4).setValues([['Overrides', 'Winner Count', 'Event ID', 'Rules']]);
   }
   return sheet;
+}
+
+// Rules = { excludeRecentEvents: N, excludeLotteryIds: [...] }; they only affect the lottery they're set on.
+function parseRules(value) {
+  var r = {};
+  try { r = JSON.parse(value || '{}') || {}; } catch (err) {}
+  return {
+    excludeRecentEvents: Math.max(0, Math.min(10, parseInt(r.excludeRecentEvents, 10) || 0)),
+    excludeLotteryIds: Array.isArray(r.excludeLotteryIds) ? r.excludeLotteryIds.map(String) : []
+  };
 }
 
 function parseOverrides(value) {
@@ -877,7 +986,8 @@ function readLotteries() {
         open: !closedAt,
         winners: winners,
         winnerCount: Math.max(1, parseInt(rows[i][7], 10) || 1),
-        eventId: String(rows[i][8] || '')
+        eventId: String(rows[i][8] || ''),
+        rules: parseRules(rows[i][9])
       }
     });
   }
@@ -903,10 +1013,13 @@ function createLottery(name, eventId) {
     if (!ev) return { error: 'Choose an event for this lottery' };
     var id = Utilities.getUuid().split('-')[0];
     var now = new Date().toISOString();
-    getLotteriesSheet().appendRow([id, name, now, ev.event.date, '', '[]', '{}', 1, eventId]);
+    getLotteriesSheet().appendRow([id, name, now, ev.event.date, '', '[]', '{}', 1, eventId, '{}']);
     return {
       success: true,
-      lottery: { id: id, name: name, createdAt: now, since: ev.event.date, closedAt: '', open: true, winners: [], winnerCount: 1, eventId: eventId }
+      lottery: {
+        id: id, name: name, createdAt: now, since: ev.event.date, closedAt: '', open: true,
+        winners: [], winnerCount: 1, eventId: eventId, rules: parseRules('{}')
+      }
     };
   });
 }
@@ -933,6 +1046,8 @@ function recordWinner(id, trainerName) {
     var winners = found.lottery.winners;
     var already = winners.some(function(w) { return trainerKey(w) === trainerKey(trainerName); });
     if (found.overrides.skipped.indexOf(trainerKey(trainerName)) !== -1) return { error: trainerName + ' was skipped. Restore them first.' };
+    var blockedBy = ineligibleReasons(found)[trainerKey(trainerName)];
+    if (blockedBy && !already) return { error: trainerName + ' is excluded by this lottery\'s rules (' + blockedBy + ')' };
     if (!already && winners.length >= found.lottery.winnerCount) return { error: 'All winners have been drawn' };
     if (!already) winners.push(trainerName);
     getLotteriesSheet().getRange(found.row, 6).setValue(JSON.stringify(winners));
@@ -954,6 +1069,74 @@ function setWinnerCount(id, count) {
     found.lottery.winnerCount = count;
     return { success: true, lottery: found.lottery };
   });
+}
+
+function setLotteryRules(id, excludeRecentEvents, excludeLotteryIds) {
+  var ids;
+  try { ids = JSON.parse(excludeLotteryIds || '[]'); } catch (err) { return { error: 'Invalid lottery list' }; }
+  var rules = parseRules(JSON.stringify({ excludeRecentEvents: excludeRecentEvents, excludeLotteryIds: ids }));
+  rules.excludeLotteryIds = rules.excludeLotteryIds.filter(function(x) { return x !== id; });
+
+  return withLock(function() {
+    var found = findLottery(id);
+    if (!found) return { error: 'Lottery not found' };
+    getLotteriesSheet().getRange(found.row, 10).setValue(JSON.stringify(rules));
+    found.lottery.rules = rules;
+    return { success: true, lottery: found.lottery, entrants: buildEntrants(found) };
+  });
+}
+
+function lotteryDate(lottery, eventsById) {
+  var ev = lottery.eventId && eventsById[lottery.eventId];
+  return ev ? ev.date : lottery.since;
+}
+
+// Maps trainerKey -> reason for anyone this lottery's rules exclude.
+function ineligibleReasons(found, all, eventsById) {
+  var rules = found.lottery.rules || parseRules('{}');
+  var reasons = {};
+  if (!rules.excludeRecentEvents && !rules.excludeLotteryIds.length) return reasons;
+
+  all = all || readLotteries();
+  if (!eventsById) {
+    eventsById = {};
+    readEvents().forEach(function(r) { eventsById[r.event.id] = r.event; });
+  }
+
+  function addWinners(lottery) {
+    lottery.winners.forEach(function(w) {
+      var k = trainerKey(w);
+      if (k && !reasons[k]) reasons[k] = 'Won ' + lottery.name;
+    });
+  }
+
+  if (rules.excludeRecentEvents > 0) {
+    // Group other lotteries by event (older lotteries stand alone) and take the N events before this one.
+    var myDate = lotteryDate(found.lottery, eventsById);
+    var myGroup = found.lottery.eventId || 'lottery:' + found.lottery.id;
+    var groups = {};
+    all.forEach(function(r) {
+      var l = r.lottery;
+      var group = l.eventId || 'lottery:' + l.id;
+      var date = lotteryDate(l, eventsById);
+      if (group === myGroup || !date || !myDate || date >= myDate) return;
+      groups[group] = groups[group] || { date: date, lotteries: [] };
+      groups[group].lotteries.push(l);
+    });
+    Object.keys(groups)
+      .map(function(g) { return groups[g]; })
+      .sort(function(a, b) { return a.date < b.date ? 1 : -1; })
+      .slice(0, rules.excludeRecentEvents)
+      .forEach(function(g) { g.lotteries.forEach(addWinners); });
+  }
+
+  rules.excludeLotteryIds.forEach(function(lotteryId) {
+    if (lotteryId === found.lottery.id) return;
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].lottery.id === lotteryId) addWinners(all[i].lottery);
+    }
+  });
+  return reasons;
 }
 
 function updateLottery(id, name, eventId) {
@@ -1169,8 +1352,12 @@ function buildEntrants(found) {
   }
 
   function sorted() {
+    var winnerKeys = found.lottery.winners.map(trainerKey);
+    var reasons = ineligibleReasons(found);
     var list = Object.keys(entrants).map(function(k) {
       entrants[k].skipped = overrides.skipped.indexOf(k) !== -1;
+      // Someone already drawn here stays a winner even if a rule added later would exclude them.
+      entrants[k].ineligible = winnerKeys.indexOf(k) === -1 ? (reasons[k] || '') : '';
       return entrants[k];
     });
     list.sort(function(a, b) { return a.trainerName.toLowerCase() < b.trainerName.toLowerCase() ? -1 : 1; });
@@ -1207,6 +1394,99 @@ function buildEntrants(found) {
   }
 
   return sorted();
+}
+
+// ---------- Trainer history ----------
+
+function getTrainerHistory() {
+  var people = {};
+
+  function person(rawName) {
+    var name = String(rawName || '').trim();
+    var key = trainerKey(name);
+    if (!key) return null;
+    if (!people[key]) people[key] = { trainerName: name, events: [], redemptions: 0, wins: [], lastSeen: '' };
+    return people[key];
+  }
+
+  function seen(p, value) {
+    var iso = toIso(value);
+    if (iso && iso > p.lastSeen) p.lastSeen = iso;
+  }
+
+  var eventsById = {};
+  readEvents().forEach(function(r) { eventsById[r.event.id] = r.event; });
+
+  var attended = {};
+  checkInRows().forEach(function(row) {
+    var ev = eventsById[String(row[1])];
+    var p = person(row[2]);
+    if (!ev || !p) return;
+    seen(p, row[0]);
+    var mark = trainerKey(row[2]) + '|' + ev.id;
+    if (attended[mark]) return;
+    attended[mark] = true;
+    p.events.push({ name: ev.name, date: ev.date });
+  });
+
+  var scanSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('ScanLog');
+  if (scanSheet) {
+    scanSheet.getDataRange().getValues().slice(1).forEach(function(row) {
+      var p = person(row[2]);
+      if (!p) return;
+      p.redemptions++;
+      seen(p, row[0]);
+    });
+  }
+
+  readLotteries().forEach(function(r) {
+    var l = r.lottery;
+    var ev = l.eventId && eventsById[l.eventId];
+    l.winners.forEach(function(w) {
+      var p = person(w);
+      if (p) p.wins.push({ lottery: l.name, event: ev ? ev.name : '', date: ev ? ev.date : l.since });
+    });
+  });
+
+  var list = Object.keys(people).map(function(k) {
+    var p = people[k];
+    p.events.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+    p.wins.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+    return p;
+  });
+  list.sort(function(a, b) {
+    if (b.events.length !== a.events.length) return b.events.length - a.events.length;
+    return a.trainerName.toLowerCase() < b.trainerName.toLowerCase() ? -1 : 1;
+  });
+  return list;
+}
+
+// ---------- Backups ----------
+
+var BACKUP_FOLDER = 'PoGo Code Dist Backups';
+var BACKUPS_TO_KEEP = 8;
+
+// Run once from the editor to schedule a weekly copy of this spreadsheet into Google Drive.
+function setupWeeklyBackup() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'backupSpreadsheet') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('backupSpreadsheet').timeBased().everyWeeks(1).onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(3).create();
+  backupSpreadsheet();
+}
+
+function backupSpreadsheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var folders = DriveApp.getFoldersByName(BACKUP_FOLDER);
+  var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(BACKUP_FOLDER);
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HHmm');
+  DriveApp.getFileById(ss.getId()).makeCopy(ss.getName() + ' backup ' + stamp, folder);
+
+  var files = [];
+  var it = folder.getFiles();
+  while (it.hasNext()) files.push(it.next());
+  files.sort(function(a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  files.slice(BACKUPS_TO_KEEP).forEach(function(f) { f.setTrashed(true); });
 }
 
 function getErrors() {
