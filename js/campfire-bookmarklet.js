@@ -1,11 +1,13 @@
 /*
- * Campfire check-in bookmarklet. Settings > Campfire Exports turns this file into a javascript: bookmark
- * (comment lines are stripped and __POGO_URL__ becomes this site's address).
+ * Campfire check-in bookmarklet. The short bookmark from Settings > Campfire Exports loads this file from
+ * the site; the full version inlines it (comment lines stripped, __POGO_URL__ set to this site's address).
  * Tapped on a campfire.scopely.com meetup page, it reads the meetup's attendance with the logged-in
  * Campfire session, shows who checked in, and can send the result to PoGo Code Dist.
  */
 (async () => {
-  const SITE = '__POGO_URL__';
+  // Loaded by the short bookmark, this file knows where it came from; the full inline copy has the address baked in.
+  const loadedFrom = document.currentScript && document.currentScript.src;
+  const SITE = loadedFrom ? loadedFrom.replace(/js\/campfire-bookmarklet\.js.*$/, '') : '__POGO_URL__';
   const API = 'https://niantic-social-api.nianticlabs.com/graphql';
   const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   const QUERY = `query GetEvent($eventId: ID!) { event(id: $eventId) { id name address eventTime eventEndTime checkedInMembersCount

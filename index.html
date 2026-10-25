@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.8.0">
+  <meta name="app-version" content="2.8.1">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.8.0">
+  <link rel="stylesheet" href="css/style.css?v=2.8.1">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -402,17 +402,19 @@
             <summary>Check a meetup from your phone</summary>
             <p class="card-note">A bookmarklet is a bookmark that runs a small script on the page you're on. Tap it on a Campfire meetup to see who checked in, then send the list here.</p>
             <ol class="setup-steps">
-              <li>Tap <strong>Copy bookmarklet</strong> below.</li>
+              <li>Tap <strong>Copy bookmarklet</strong> below. Check the box shows text starting with <code>javascript:</code>.</li>
               <li>Bookmark any page, then edit that bookmark: name it <code>cfcheck</code> and replace its address with what you copied.</li>
-              <li>Open a meetup on <code>campfire.scopely.com</code> in the same browser, logged in.</li>
-              <li><strong>Safari:</strong> open Bookmarks and tap <code>cfcheck</code>. <strong>Chrome:</strong> type <code>cfcheck</code> in the address bar and tap the bookmark in the suggestions.</li>
+              <li>Test it: on any page (not Campfire), run <code>cfcheck</code>. A message saying to open a Campfire meetup means it works.</li>
+              <li>Open a meetup on <code>campfire.scopely.com</code> in the same browser, logged in, and run <code>cfcheck</code>.</li>
               <li>Tap <strong>Send to PoGo Code Dist</strong> to save the meetup here. Sending the same meetup again replaces the old copy.</li>
             </ol>
+            <p class="card-note"><strong>Running it:</strong> in Safari, open Bookmarks and tap <code>cfcheck</code>. In Chrome, tap the address bar, type <code>cfcheck</code>, and tap the bookmark in the suggestions (tapping it in the bookmarks list doesn't run it).</p>
             <div class="campfire-picker">
               <button type="button" id="campfire-bookmarklet-copy" class="btn btn-small btn-primary">Copy bookmarklet</button>
-              <span id="campfire-bookmarklet-size" class="code-meta"></span>
+              <button type="button" id="campfire-bookmarklet-full" class="btn btn-small btn-secondary">Copy full version</button>
             </div>
             <textarea id="campfire-bookmarklet-code" class="campfire-bookmarklet-code" rows="3" readonly aria-label="Bookmarklet code"></textarea>
+            <p class="card-note">The short bookmarklet loads the latest script from this site each time. If it only works on other pages but not on Campfire, try the full version (about 14 KB, no download needed).</p>
           </details>
         </div>
 
@@ -441,13 +443,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.8.0</span>
+      <span>v2.8.1</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.8.0"></script>
-  <script src="js/error-logger.js?v=2.8.0"></script>
-  <script src="js/auth.js?v=2.8.0"></script>
-  <script src="js/app.js?v=2.8.0"></script>
+  <script src="js/site-config.js?v=2.8.1"></script>
+  <script src="js/error-logger.js?v=2.8.1"></script>
+  <script src="js/auth.js?v=2.8.1"></script>
+  <script src="js/app.js?v=2.8.1"></script>
 </body>
 </html>

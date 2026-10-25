@@ -2431,48 +2431,59 @@ document.getElementById('campfire-delete').addEventListener('click', async () =>
   }
 });
 
-// Phone bookmarklet: built from js/campfire-bookmarklet.js with this site's address baked in, so the
-// meetups it sends land back here.
-let campfireBookmarklet = null;
+// Phone bookmarklet. The short one loads js/campfire-bookmarklet.js from this site each time it runs, so
+// it's easy to paste and always current. The full one inlines that file with this site's address baked
+// in, for browsers where the short one can't load it.
+const campfireSite = () => location.origin + location.pathname.replace(/index\.html$/, '');
+let campfireFullBookmarklet = null;
 
-async function buildCampfireBookmarklet() {
-  if (campfireBookmarklet) return campfireBookmarklet;
+function campfireShortBookmarklet() {
+  const src = `${campfireSite()}js/campfire-bookmarklet.js?t=`;
+  return `javascript:(()=>{const s=document.createElement('script');s.src='${src}'+Date.now();document.body.appendChild(s)})()`;
+}
+
+async function buildCampfireFullBookmarklet() {
+  if (campfireFullBookmarklet) return campfireFullBookmarklet;
   const version = document.querySelector('meta[name="app-version"]').content;
   const res = await fetch(`js/campfire-bookmarklet.js?v=${version}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const site = location.origin + location.pathname.replace(/index\.html$/, '');
   const source = (await res.text())
     .replace(/^\/\*[\s\S]*?\*\/\s*/, '')
     .split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('//')).join('\n')
-    .replace('__POGO_URL__', site);
-  campfireBookmarklet = 'javascript:' + encodeURIComponent(source);
-  return campfireBookmarklet;
+    .replace('__POGO_URL__', campfireSite());
+  campfireFullBookmarklet = 'javascript:' + encodeURIComponent(source);
+  return campfireFullBookmarklet;
 }
 
-document.querySelector('.campfire-phone').addEventListener('toggle', async (e) => {
-  if (!e.target.open) return;
+// iPhones only allow clipboard writes straight from the tap, so nothing may be awaited before this.
+function copyBookmarklet(text, label) {
   const box = document.getElementById('campfire-bookmarklet-code');
-  try {
-    box.value = await buildCampfireBookmarklet();
-    document.getElementById('campfire-bookmarklet-size').textContent = `${Math.round(box.value.length / 1024)} KB`;
-  } catch (err) {
-    box.value = '';
-    showToast("Couldn't load the bookmarklet: " + err.message);
-  }
+  box.value = text;
+  const selectForHand = () => {
+    box.focus();
+    box.setSelectionRange(0, box.value.length);
+    showToast('Copying was blocked. The text in the box is selected: copy it by hand.');
+  };
+  if (!navigator.clipboard) return selectForHand();
+  navigator.clipboard.writeText(text)
+    .then(() => showToast(`${label} copied. Paste it as a bookmark's address.`))
+    .catch(selectForHand);
+}
+
+document.querySelector('.campfire-phone').addEventListener('toggle', (e) => {
+  if (!e.target.open) return;
+  document.getElementById('campfire-bookmarklet-code').value = campfireShortBookmarklet();
+  buildCampfireFullBookmarklet().catch(() => {});
 });
 
-document.getElementById('campfire-bookmarklet-copy').addEventListener('click', async () => {
-  const box = document.getElementById('campfire-bookmarklet-code');
-  try {
-    box.value = await buildCampfireBookmarklet();
-    await navigator.clipboard.writeText(box.value);
-    showToast("Bookmarklet copied. Paste it as a bookmark's address.");
-  } catch {
-    // Some phones block clipboard access; selecting the text lets you copy it by hand.
-    box.focus();
-    box.select();
-    showToast('Copy the selected text by hand.');
-  }
+document.getElementById('campfire-bookmarklet-copy').addEventListener('click', () => {
+  copyBookmarklet(campfireShortBookmarklet(), 'Bookmarklet');
+});
+
+document.getElementById('campfire-bookmarklet-full').addEventListener('click', () => {
+  if (campfireFullBookmarklet) return copyBookmarklet(campfireFullBookmarklet, 'Full bookmarklet');
+  showToast('Still loading the full version. Tap again in a moment.');
+  buildCampfireFullBookmarklet().catch(err => showToast("Couldn't load the full version: " + err.message));
 });
 
 // The bookmarklet opens this page with #campfire=<export JSON>. Save it like an upload, replacing an
