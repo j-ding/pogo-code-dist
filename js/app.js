@@ -343,8 +343,19 @@ function isWinner(lottery, name) {
   return lottery.winners.some(w => trainerKey(w) === trainerKey(name));
 }
 
+// Campfire meetups and multi-meetup uploads a lottery can draw from (ids "cf:..." and "cfx:...").
+let campfireSources = { meetups: [], uploads: [] };
+
+async function loadCampfireSources() {
+  try {
+    campfireSources = await callSheet({ action: 'getLotterySources' });
+  } catch {
+    // Lotteries still work from Check In events if the uploads can't be read.
+  }
+}
+
 async function initLottery() {
-  await loadEvents();
+  await Promise.all([loadEvents(), loadCampfireSources()]);
   fillEventSelect(document.getElementById('lottery-event'));
   loadLotteries();
 }
@@ -353,17 +364,32 @@ function eventLabel(ev) {
   return `${ev.name} (${new Date(ev.date).toLocaleDateString()})`;
 }
 
+function campfireSourceLabel(s) {
+  const day = s.date ? ` (${new Date(s.date).toLocaleDateString()})` : '';
+  const meetups = s.meetups ? `${s.meetups} meetups, ` : '';
+  return `${s.name}${day} · ${meetups}${s.checkedIn} checked in`;
+}
+
 function fillEventSelect(select, selectedId) {
   const events = eventState.events;
-  if (events.length === 0) {
-    select.innerHTML = '<option value="">Create an event in the Check In tab first</option>';
+  const { meetups = [], uploads = [] } = campfireSources;
+  if (!events.length && !meetups.length && !uploads.length) {
+    select.innerHTML = '<option value="">Create an event in the Check In tab, or upload a Campfire meetup in Settings</option>';
     return;
   }
-  select.innerHTML = events.map(ev => `<option value="${escapeHtml(ev.id)}">${escapeHtml(eventLabel(ev))}</option>`).join('');
-  if (selectedId && events.some(ev => ev.id === selectedId)) select.value = selectedId;
+  const group = (label, items, text) => items.length
+    ? `<optgroup label="${escapeHtml(label)}">${items.map(x => `<option value="${escapeHtml(x.id)}">${escapeHtml(text(x))}</option>`).join('')}</optgroup>`
+    : '';
+  select.innerHTML = group('Check In events', events, eventLabel)
+    + group('Campfire meetups', meetups, campfireSourceLabel)
+    + group('Campfire uploads (every meetup in the file)', uploads, campfireSourceLabel);
+  if (selectedId && select.querySelector(`option[value="${CSS.escape(selectedId)}"]`)) select.value = selectedId;
 }
 
 function lotteryEventName(lottery) {
+  if (/^cfx?:/.test(lottery.eventId)) {
+    return lottery.sourceName ? `Campfire: ${lottery.sourceName}` : 'Deleted Campfire upload';
+  }
   const ev = eventState.events.find(e => e.id === lottery.eventId);
   return ev ? eventLabel(ev) : 'Deleted event';
 }
@@ -518,6 +544,7 @@ function renderLotteryEntrants() {
       e.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : '',
       e.signedUp ? '<span class="badge badge-new">Lottery sign-up</span>' : '',
       e.checkedIn ? '<span class="badge badge-new">Checked in</span>' : '',
+      e.campfire ? '<span class="badge badge-new">Campfire check-in</span>' : '',
     ].join(' ');
     const stateClass = winner ? ' is-winner' : (e.skipped || e.ineligible) ? ' is-skipped' : '';
     const winnerActions = winner
@@ -1670,7 +1697,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 20;
+const REQUIRED_SCRIPT_VERSION = 21;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);

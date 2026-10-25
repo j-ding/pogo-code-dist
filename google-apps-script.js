@@ -15,7 +15,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 20;
+var SCRIPT_VERSION = 21;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
@@ -219,7 +219,20 @@ function handleGet(e) {
   }
 
   if (action === 'getLotteries') {
-    return jsonOut({ lotteries: readLotteries().map(function(r) { return r.lottery; }) });
+    var cfIndex = null;
+    return jsonOut({ lotteries: readLotteries().map(function(r) {
+      // Campfire-based lotteries carry their source's name, since the site doesn't load every upload.
+      if (isCampfireSource(r.lottery.eventId)) {
+        cfIndex = cfIndex || campfireIndex();
+        var source = resolveLotterySource(r.lottery.eventId, cfIndex);
+        r.lottery.sourceName = source ? source.name : '';
+      }
+      return r.lottery;
+    }) });
+  }
+
+  if (action === 'getLotterySources') {
+    return jsonOut(campfireLotterySources());
   }
 
   if (action === 'getLottery') {
@@ -402,8 +415,103 @@ function getCampfire(id) {
   return { error: 'Export not found' };
 }
 
+// Every upload, newest first, with its parsed JSON. Unreadable uploads are skipped.
+function readCampfireExports() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CampfireExports');
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var list = [];
+  sheet.getDataRange().getValues().slice(1).forEach(function(row) {
+    if (!row[0]) return;
+    try {
+      var data = JSON.parse(row.slice(CAMPFIRE_DATA_COL - 1).join(''));
+      if (data && Array.isArray(data.events)) list.push({ summary: campfireSummary(row), data: data });
+    } catch (err) {}
+  });
+  list.sort(function(a, b) { return a.summary.uploadedAt < b.summary.uploadedAt ? 1 : -1; });
+  return list;
+}
+
+// Meetups by Campfire's own event id (the newest upload of a meetup wins, so re-sending one from the
+// phone updates lotteries that use it), plus uploads by id.
+function campfireIndex(exports) {
+  var index = { meetups: {}, uploads: {} };
+  (exports || readCampfireExports()).forEach(function(x) {
+    index.uploads[x.summary.id] = x;
+    x.data.events.forEach(function(ev) {
+      if (ev && ev.id && !index.meetups[ev.id]) index.meetups[ev.id] = { event: ev, upload: x.summary };
+    });
+  });
+  return index;
+}
+
+function checkedInNames(ev) {
+  return (ev.attendees || []).filter(function(a) { return a.status === 'CHECKED_IN' && a.name; })
+    .map(function(a) { return String(a.name).trim(); });
+}
+
+function isCampfireSource(id) {
+  return /^cfx?:/.test(String(id || ''));
+}
+
+// A lottery's entrant source: "cf:<meetup id>", "cfx:<upload id>", or one of our event ids.
+// Returns { name, date, campfireNames } (campfireNames only for Campfire sources), or null if it's gone.
+function resolveLotterySource(id, index) {
+  id = String(id || '');
+  if (id.indexOf('cf:') === 0) {
+    var meetup = (index || campfireIndex()).meetups[id.slice(3)];
+    if (!meetup) return null;
+    return { name: meetup.event.name || 'Campfire meetup', date: meetup.event.startTime || meetup.upload.uploadedAt, campfireNames: checkedInNames(meetup.event) };
+  }
+  if (id.indexOf('cfx:') === 0) {
+    var upload = (index || campfireIndex()).uploads[id.slice(4)];
+    if (!upload) return null;
+    var names = [];
+    var latest = '';
+    upload.data.events.forEach(function(ev) {
+      names = names.concat(checkedInNames(ev));
+      if (ev.startTime && ev.startTime > latest) latest = ev.startTime;
+    });
+    return { name: upload.summary.name, date: latest || upload.summary.uploadedAt, campfireNames: names };
+  }
+  var ev = findEvent(id);
+  return ev ? { name: ev.event.name, date: ev.event.date } : null;
+}
+
+function campfireLotterySources() {
+  var index = campfireIndex();
+  var meetups = Object.keys(index.meetups).map(function(id) {
+    var m = index.meetups[id];
+    var people = {};
+    checkedInNames(m.event).forEach(function(n) { people[trainerKey(n)] = true; });
+    return { id: 'cf:' + id, name: m.event.name || 'Campfire meetup', date: m.event.startTime || '', checkedIn: Object.keys(people).length };
+  });
+  meetups.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+  // A single-meetup upload is already offered as that meetup.
+  var uploads = Object.keys(index.uploads).map(function(id) { return index.uploads[id]; })
+    .filter(function(x) { return x.data.events.length > 1; })
+    .map(function(x) {
+      var source = resolveLotterySource('cfx:' + x.summary.id, index);
+      var people = {};
+      source.campfireNames.forEach(function(n) { people[trainerKey(n)] = true; });
+      return { id: 'cfx:' + x.summary.id, name: x.summary.name, date: source.date, meetups: x.data.events.length, checkedIn: Object.keys(people).length };
+    });
+  return { meetups: meetups, uploads: uploads };
+}
+
 function deleteCampfire(id) {
   return withLock(function() {
+    // Like events, an upload a lottery draws from can't be deleted, unless a newer upload of the same
+    // meetup still covers it (re-sending a meetup from the phone replaces the old copy this way).
+    var exports = readCampfireExports();
+    var now = campfireIndex(exports);
+    var without = campfireIndex(exports.filter(function(x) { return x.summary.id !== String(id); }));
+    var usedBy = readLotteries().filter(function(r) {
+      var source = r.lottery.eventId;
+      return isCampfireSource(source) && resolveLotterySource(source, now) && !resolveLotterySource(source, without);
+    });
+    if (usedBy.length) {
+      return { error: 'Lottery "' + usedBy[0].lottery.name + '" uses this upload. Delete it or switch it to another event first.' };
+    }
     var removed = deleteRowsWhere(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CampfireExports'), function(r) {
       return String(r[0]) === String(id);
     });
@@ -1372,16 +1480,16 @@ function createLottery(name, eventId) {
   if (!name) return { error: 'Lottery name is required' };
 
   return withLock(function() {
-    var ev = findEvent(eventId);
-    if (!ev) return { error: 'Choose an event for this lottery' };
+    var source = resolveLotterySource(eventId);
+    if (!source) return { error: 'Choose an event for this lottery' };
     var id = Utilities.getUuid().split('-')[0];
     var now = new Date().toISOString();
-    getLotteriesSheet().appendRow([id, name, now, ev.event.date, '', '[]', '{}', 1, eventId, '{}']);
+    getLotteriesSheet().appendRow([id, name, now, source.date, '', '[]', '{}', 1, eventId, '{}']);
     return {
       success: true,
       lottery: {
-        id: id, name: name, createdAt: now, since: ev.event.date, closedAt: '', open: true,
-        winners: [], winnerCount: 1, eventId: eventId, rules: parseRules('{}')
+        id: id, name: name, createdAt: now, since: source.date, closedAt: '', open: true,
+        winners: [], winnerCount: 1, eventId: eventId, rules: parseRules('{}'), sourceName: source.name
       }
     };
   });
@@ -1509,15 +1617,16 @@ function updateLottery(id, name, eventId) {
   return withLock(function() {
     var found = findLottery(id);
     if (!found) return { error: 'Lottery not found' };
-    var ev = findEvent(eventId);
-    if (!ev) return { error: 'Choose an event for this lottery' };
+    var source = resolveLotterySource(eventId);
+    if (!source) return { error: 'Choose an event for this lottery' };
     var sheet = getLotteriesSheet();
     sheet.getRange(found.row, 2).setValue(name);
-    sheet.getRange(found.row, 4).setValue(ev.event.date);
+    sheet.getRange(found.row, 4).setValue(source.date);
     sheet.getRange(found.row, 9).setValue(eventId);
     found.lottery.name = name;
-    found.lottery.since = ev.event.date;
+    found.lottery.since = source.date;
     found.lottery.eventId = eventId;
+    found.lottery.sourceName = source.name;
     return { success: true, lottery: found.lottery };
   });
 }
@@ -1698,8 +1807,9 @@ function getLotteryEntrants(id) {
   return { entrants: buildEntrants(found) };
 }
 
-// Entrants = everyone checked in to the lottery's event (or, for older lotteries, code redeemers on the
-// check-in date plus their own sign-ups), after applying the lottery's admin renames and removals.
+// Entrants = everyone checked in to the lottery's event, or everyone Campfire marked as checked in at its
+// meetup/upload (or, for older lotteries, code redeemers on the check-in date plus their own sign-ups),
+// after applying the lottery's admin renames and removals.
 function buildEntrants(found) {
   var id = found.lottery.id;
   var overrides = found.overrides;
@@ -1710,7 +1820,7 @@ function buildEntrants(found) {
     var name = resolveEntrantName(overrides, rawName);
     var key = trainerKey(name);
     if (!key || overrides.excluded.indexOf(key) !== -1) return;
-    if (!entrants[key]) entrants[key] = { trainerName: name, redeemed: false, signedUp: false, checkedIn: false };
+    if (!entrants[key]) entrants[key] = { trainerName: name, redeemed: false, signedUp: false, checkedIn: false, campfire: false };
     entrants[key][flag] = true;
   }
 
@@ -1725,6 +1835,12 @@ function buildEntrants(found) {
     });
     list.sort(function(a, b) { return a.trainerName.toLowerCase() < b.trainerName.toLowerCase() ? -1 : 1; });
     return list;
+  }
+
+  if (isCampfireSource(found.lottery.eventId)) {
+    var source = resolveLotterySource(found.lottery.eventId);
+    (source ? source.campfireNames : []).forEach(function(n) { add(n, 'campfire'); });
+    return sorted();
   }
 
   if (found.lottery.eventId) {

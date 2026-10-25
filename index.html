@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.8.4">
+  <meta name="app-version" content="2.9.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.8.4">
+  <link rel="stylesheet" href="css/style.css?v=2.9.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -185,8 +185,9 @@
               <input type="text" id="lottery-name" placeholder="e.g. Community Day Raffle" maxlength="60" required>
             </div>
             <div class="form-group">
-              <label for="lottery-event">Event</label>
+              <label for="lottery-event">Entrants from</label>
               <select id="lottery-event" required></select>
+              <small>A Check In event, a Campfire meetup, or a whole Campfire upload. Campfire entrants are the people Campfire marked as checked in.</small>
             </div>
             <button type="submit" class="btn btn-primary">Create Lottery</button>
           </form>
@@ -213,7 +214,7 @@
               <input type="text" id="lottery-edit-name" maxlength="60" required>
             </div>
             <div class="form-group">
-              <label for="lottery-edit-event">Event</label>
+              <label for="lottery-edit-event">Entrants from</label>
               <select id="lottery-edit-event" required></select>
             </div>
             <div class="lottery-toolbar-actions">
@@ -442,13 +443,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.8.4</span>
+      <span>v2.9.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.8.4"></script>
-  <script src="js/error-logger.js?v=2.8.4"></script>
-  <script src="js/auth.js?v=2.8.4"></script>
-  <script src="js/app.js?v=2.8.4"></script>
+  <script src="js/site-config.js?v=2.9.0"></script>
+  <script src="js/error-logger.js?v=2.9.0"></script>
+  <script src="js/auth.js?v=2.9.0"></script>
+  <script src="js/app.js?v=2.9.0"></script>
 </body>
 </html>
