@@ -1210,6 +1210,13 @@ function setAddMode(mode) {
   document.getElementById('bulk-input-group').classList.toggle('hidden', mode !== 'bulk');
 }
 
+// The Add Code form lives at the top of Settings; this shortcut on Active Codes jumps straight to it.
+document.getElementById('go-add-codes').addEventListener('click', () => {
+  activateTab('settings');
+  document.getElementById('add-code-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById(addMode === 'bulk' ? 'code-bulk' : 'code-input').focus({ preventScroll: true });
+});
+
 // Add Code form
 document.getElementById('add-code-form').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -2372,7 +2379,8 @@ function onAdminReady() {
   syncAndRender(true);
   let saved = null;
   try { saved = localStorage.getItem('pogo_active_tab'); } catch {}
-  // Scan Log and Community used to be their own tabs; they now live under Settings.
+  // Add Code, Scan Log, and Community used to be their own tabs; they now live under Settings.
   if (saved === 'scan-log' || saved === 'community') saved = 'settings';
-  activateTab(saved && document.querySelector(`.tab[data-tab="${saved}"]`) ? saved : 'add-code');
+  if (saved === 'add-code') saved = 'settings';
+  activateTab(saved && document.querySelector(`.tab[data-tab="${saved}"]`) ? saved : 'active-codes');
 }

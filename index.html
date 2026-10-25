@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.6.0">
+  <meta name="app-version" content="2.6.1">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.6.0">
+  <link rel="stylesheet" href="css/style.css?v=2.6.1">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -50,8 +50,7 @@
     </section>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="add-code">Add Code</button>
-      <button class="tab" data-tab="active-codes">Active Codes</button>
+      <button class="tab active" data-tab="active-codes">Active Codes</button>
       <button class="tab" data-tab="display">Display</button>
       <button class="tab" data-tab="checkin">Check In</button>
       <button class="tab" data-tab="lottery">Lottery</button>
@@ -60,57 +59,15 @@
     </nav>
 
     <main>
-      <!-- Add Code Tab -->
-      <section id="add-code" class="tab-content active">
-        <div class="card">
-          <h2>Add New Code</h2>
-          <div class="add-mode-toggle">
-            <button class="btn btn-small btn-secondary active" id="mode-single" onclick="setAddMode('single')">Single</button>
-            <button class="btn btn-small btn-secondary" id="mode-bulk" onclick="setAddMode('bulk')">Bulk</button>
-          </div>
-          <form id="add-code-form">
-            <div class="form-group" id="single-input-group">
-              <label for="code-input">Redemption Code</label>
-              <input type="text" id="code-input" placeholder="e.g. UGHLJVME7H29N">
-            </div>
-            <div class="form-group hidden" id="bulk-input-group">
-              <label for="code-bulk">Redemption Codes (comma separated)</label>
-              <textarea id="code-bulk" rows="4" placeholder="CODE1, CODE2, CODE3"></textarea>
-            </div>
-            <div class="form-group">
-              <label for="code-label">Group (optional)</label>
-              <input type="text" id="code-label" list="group-options" placeholder="e.g. Nov 2026 batch, or Test" maxlength="60" autocomplete="off">
-              <datalist id="group-options"></datalist>
-              <small>Codes with the same group can be paused or enabled together on the Active Codes tab.</small>
-            </div>
-            <div class="form-group">
-              <label for="code-expiry">Expiry Date (optional)</label>
-              <input type="date" id="code-expiry">
-            </div>
-            <button type="submit" class="btn btn-primary">Add Code & Generate QR</button>
-          </form>
-        </div>
-
-        <div id="qr-preview" class="card hidden">
-          <h2>Generated QR Code</h2>
-          <div class="qr-display">
-            <div id="qr-container"></div>
-            <p id="qr-code-text" class="code-text"></p>
-            <p id="qr-label-text" class="label-text"></p>
-          </div>
-          <div class="qr-actions">
-            <button id="download-qr" class="btn btn-secondary">Download QR Image</button>
-            <button id="copy-link" class="btn btn-secondary">Copy Redeem Link</button>
-          </div>
-        </div>
-      </section>
-
       <!-- Active Codes Tab -->
-      <section id="active-codes" class="tab-content">
+      <section id="active-codes" class="tab-content active">
         <div class="card">
           <div class="codes-header">
             <h2>Codes</h2>
-            <button id="sync-codes" class="btn btn-small btn-secondary" onclick="syncAndRender()">Sync</button>
+            <span class="lottery-toolbar-actions">
+              <button id="go-add-codes" class="btn btn-small btn-primary">Add Codes</button>
+              <button id="sync-codes" class="btn btn-small btn-secondary" onclick="syncAndRender()">Sync</button>
+            </span>
           </div>
           <p class="card-note">Codes are grouped by their Group. Paused groups stay off the Display tab without marking their codes used.</p>
           <div id="codes-list" class="code-groups">
@@ -325,8 +282,50 @@
         </div>
       </section>
 
-      <!-- Settings Tab (also holds the scan log and community QR codes) -->
+      <!-- Settings Tab (also holds Add Code, the scan log, and community QR codes) -->
       <section id="settings" class="tab-content">
+        <div class="card" id="add-code-card">
+          <h2>Add New Code</h2>
+          <div class="add-mode-toggle">
+            <button class="btn btn-small btn-secondary active" id="mode-single" onclick="setAddMode('single')">Single</button>
+            <button class="btn btn-small btn-secondary" id="mode-bulk" onclick="setAddMode('bulk')">Bulk</button>
+          </div>
+          <form id="add-code-form">
+            <div class="form-group" id="single-input-group">
+              <label for="code-input">Redemption Code</label>
+              <input type="text" id="code-input" placeholder="e.g. UGHLJVME7H29N">
+            </div>
+            <div class="form-group hidden" id="bulk-input-group">
+              <label for="code-bulk">Redemption Codes (comma separated)</label>
+              <textarea id="code-bulk" rows="4" placeholder="CODE1, CODE2, CODE3"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="code-label">Group (optional)</label>
+              <input type="text" id="code-label" list="group-options" placeholder="e.g. Nov 2026 batch, or Test" maxlength="60" autocomplete="off">
+              <datalist id="group-options"></datalist>
+              <small>Codes with the same group can be paused or enabled together on the Active Codes tab.</small>
+            </div>
+            <div class="form-group">
+              <label for="code-expiry">Expiry Date (optional)</label>
+              <input type="date" id="code-expiry">
+            </div>
+            <button type="submit" class="btn btn-primary">Add Code & Generate QR</button>
+          </form>
+        </div>
+
+        <div id="qr-preview" class="card hidden">
+          <h2>Generated QR Code</h2>
+          <div class="qr-display">
+            <div id="qr-container"></div>
+            <p id="qr-code-text" class="code-text"></p>
+            <p id="qr-label-text" class="label-text"></p>
+          </div>
+          <div class="qr-actions">
+            <button id="download-qr" class="btn btn-secondary">Download QR Image</button>
+            <button id="copy-link" class="btn btn-secondary">Copy Redeem Link</button>
+          </div>
+        </div>
+
         <div class="card">
           <h2>Scan Log</h2>
           <div class="log-controls">
@@ -420,13 +419,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.6.0</span>
+      <span>v2.6.1</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.6.0"></script>
-  <script src="js/error-logger.js?v=2.6.0"></script>
-  <script src="js/auth.js?v=2.6.0"></script>
-  <script src="js/app.js?v=2.6.0"></script>
+  <script src="js/site-config.js?v=2.6.1"></script>
+  <script src="js/error-logger.js?v=2.6.1"></script>
+  <script src="js/auth.js?v=2.6.1"></script>
+  <script src="js/app.js?v=2.6.1"></script>
 </body>
 </html>
