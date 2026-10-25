@@ -2431,6 +2431,97 @@ document.getElementById('campfire-delete').addEventListener('click', async () =>
   }
 });
 
+// Phone bookmarklet: built from js/campfire-bookmarklet.js with this site's address baked in, so the
+// meetups it sends land back here.
+let campfireBookmarklet = null;
+
+async function buildCampfireBookmarklet() {
+  if (campfireBookmarklet) return campfireBookmarklet;
+  const version = document.querySelector('meta[name="app-version"]').content;
+  const res = await fetch(`js/campfire-bookmarklet.js?v=${version}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const site = location.origin + location.pathname.replace(/index\.html$/, '');
+  const source = (await res.text())
+    .replace(/^\/\*[\s\S]*?\*\/\s*/, '')
+    .split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('//')).join('\n')
+    .replace('__POGO_URL__', site);
+  campfireBookmarklet = 'javascript:' + encodeURIComponent(source);
+  return campfireBookmarklet;
+}
+
+document.querySelector('.campfire-phone').addEventListener('toggle', async (e) => {
+  if (!e.target.open) return;
+  const box = document.getElementById('campfire-bookmarklet-code');
+  try {
+    box.value = await buildCampfireBookmarklet();
+    document.getElementById('campfire-bookmarklet-size').textContent = `${Math.round(box.value.length / 1024)} KB`;
+  } catch (err) {
+    box.value = '';
+    showToast("Couldn't load the bookmarklet: " + err.message);
+  }
+});
+
+document.getElementById('campfire-bookmarklet-copy').addEventListener('click', async () => {
+  const box = document.getElementById('campfire-bookmarklet-code');
+  try {
+    box.value = await buildCampfireBookmarklet();
+    await navigator.clipboard.writeText(box.value);
+    showToast("Bookmarklet copied. Paste it as a bookmark's address.");
+  } catch {
+    // Some phones block clipboard access; selecting the text lets you copy it by hand.
+    box.focus();
+    box.select();
+    showToast('Copy the selected text by hand.');
+  }
+});
+
+// The bookmarklet opens this page with #campfire=<export JSON>. Save it like an upload, replacing an
+// earlier copy of the same meetup so re-sending during an event keeps one up-to-date entry.
+async function receiveCampfireFromLink() {
+  const prefix = '#campfire=';
+  if (!location.hash.startsWith(prefix)) return;
+  const raw = location.hash.slice(prefix.length);
+  history.replaceState(null, '', location.pathname + location.search);
+
+  let data;
+  try {
+    data = JSON.parse(decodeURIComponent(raw));
+  } catch {
+    showToast('That Campfire link was cut off or damaged. Try sending it again.');
+    return;
+  }
+  const ev = data && Array.isArray(data.events) && data.events[0];
+  if (!ev || !Array.isArray(data.people)) {
+    showToast("That link doesn't contain a Campfire meetup.");
+    return;
+  }
+
+  const day = ev.startTime ? new Date(ev.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  const name = `Meetup: ${ev.name || 'Untitled'}${day ? ' (' + day + ')' : ''}`;
+  activateTab('settings');
+  showToast('Saving Campfire meetup...');
+  try {
+    const before = await callSheet({ action: 'listCampfire' });
+    const saved = await postSheet({ action: 'uploadCampfire', name, json: JSON.stringify(data) });
+    for (const old of (before.exports || []).filter(x => x.name === name)) {
+      await callSheet({ action: 'deleteCampfire', id: old.id }).catch(() => {});
+      campfireState.cache.delete(old.id);
+    }
+    campfireState.selectedId = saved.export.id;
+    campfireState.view = 'events';
+    await loadCampfireList();
+    document.getElementById('campfire-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const checkedIn = ev.counts ? ev.counts.checkedIn : 0;
+    showToast(`Saved "${ev.name}": ${checkedIn} checked in`);
+  } catch (err) {
+    showToast("Couldn't save the meetup: " + err.message);
+  }
+}
+
+window.addEventListener('hashchange', () => {
+  if (getAuthToken()) receiveCampfireFromLink();
+});
+
 // Called by auth.js once a valid admin session exists (after login, or on load with a saved session).
 function onAdminReady() {
   syncAndRender(true);
@@ -2440,4 +2531,5 @@ function onAdminReady() {
   if (saved === 'scan-log' || saved === 'community') saved = 'settings';
   if (saved === 'add-code') saved = 'settings';
   activateTab(saved && document.querySelector(`.tab[data-tab="${saved}"]`) ? saved : 'active-codes');
+  receiveCampfireFromLink();
 }

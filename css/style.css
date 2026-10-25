@@ -1661,6 +1661,41 @@ header h1 {
   font-size: 0.85rem;
 }
 
+.campfire-phone {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.campfire-phone summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.campfire-phone .card-note {
+  margin: 10px 0 0;
+}
+
+.campfire-phone .campfire-picker {
+  margin: 8px 0;
+}
+
+.campfire-bookmarklet-code {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 0.75rem;
+  resize: vertical;
+}
+
 /* Setup Steps */
 .setup-steps {
   padding-left: 20px;
