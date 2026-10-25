@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.10.0">
+  <meta name="app-version" content="2.10.1">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.10.0">
+  <link rel="stylesheet" href="css/style.css?v=2.10.1">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -264,6 +264,15 @@
               <button id="lottery-draw-all" class="btn btn-small btn-primary hidden"></button>
             </div>
           </div>
+          <div class="lottery-sort">
+            <label for="lottery-sort" class="inline-label">Sort</label>
+            <select id="lottery-sort" class="inline-date">
+              <option value="name">Name</option>
+              <option value="checkins">Most Campfire check-ins</option>
+              <option value="random">Random</option>
+            </select>
+            <button id="lottery-shuffle" class="btn btn-small btn-secondary" title="Put the entrants in a new random order">Shuffle</button>
+          </div>
           <div id="lottery-list" class="lottery-list">
             <p class="empty-state">No entrants yet.</p>
           </div>
@@ -447,13 +456,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.10.0</span>
+      <span>v2.10.1</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.10.0"></script>
-  <script src="js/error-logger.js?v=2.10.0"></script>
-  <script src="js/auth.js?v=2.10.0"></script>
-  <script src="js/app.js?v=2.10.0"></script>
+  <script src="js/site-config.js?v=2.10.1"></script>
+  <script src="js/error-logger.js?v=2.10.1"></script>
+  <script src="js/auth.js?v=2.10.1"></script>
+  <script src="js/app.js?v=2.10.1"></script>
 </body>
 </html>

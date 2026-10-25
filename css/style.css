@@ -892,6 +892,13 @@ header h1 {
   flex-wrap: wrap;
 }
 
+.lottery-sort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
 .winner-count {
   display: inline-flex;
   align-items: center;

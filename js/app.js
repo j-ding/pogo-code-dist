@@ -510,6 +510,49 @@ async function loadLotteryEntrants() {
   }
 }
 
+// How the entrant list is ordered on screen. The draw is random either way, so this is only for reading
+// the list. "random" keeps one shuffled order (by trainer key) until Shuffle is pressed again.
+const ENTRANT_SORT_KEY = 'pogo_entrant_sort';
+let entrantSort = 'name';
+try { entrantSort = localStorage.getItem(ENTRANT_SORT_KEY) || 'name'; } catch {}
+let shuffleRank = new Map();
+
+function shuffleEntrantOrder() {
+  const keys = lotteryState.entrants.map(e => trainerKey(e.trainerName));
+  for (let i = keys.length - 1; i > 0; i--) {
+    const j = randomIndex(i + 1);
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+  }
+  shuffleRank = new Map(keys.map((k, i) => [k, i]));
+}
+
+function sortedEntrants(entrants) {
+  const byName = (a, b) => a.trainerName.toLowerCase().localeCompare(b.trainerName.toLowerCase());
+  const list = [...entrants];
+  if (entrantSort === 'checkins') return list.sort((a, b) => (b.checkIns || 0) - (a.checkIns || 0) || byName(a, b));
+  if (entrantSort === 'random') {
+    // A different lottery's list (or the first visit) gets its own shuffle.
+    if (!list.some(e => shuffleRank.has(trainerKey(e.trainerName)))) shuffleEntrantOrder();
+    // Anyone who appeared since the last shuffle (e.g. after Refresh) goes at the end.
+    const rank = e => shuffleRank.get(trainerKey(e.trainerName)) ?? Infinity;
+    return list.sort((a, b) => rank(a) - rank(b) || byName(a, b));
+  }
+  return list.sort(byName);
+}
+
+function setEntrantSort(value) {
+  entrantSort = value;
+  try { localStorage.setItem(ENTRANT_SORT_KEY, value); } catch {}
+  renderLotteryEntrants();
+}
+
+document.getElementById('lottery-sort').addEventListener('change', (e) => setEntrantSort(e.target.value));
+
+document.getElementById('lottery-shuffle').addEventListener('click', () => {
+  shuffleEntrantOrder();
+  setEntrantSort('random');
+});
+
 function renderLotteryEntrants() {
   const lottery = selectedLottery();
   const list = document.getElementById('lottery-list');
@@ -517,12 +560,19 @@ function renderLotteryEntrants() {
   const entries = entrants.reduce((n, e) => n + (e.entries || 1), 0);
   document.getElementById('lottery-count').textContent = entries > entrants.length ? `${entrants.length} · ${entries} entries` : entrants.length;
 
+  // Check-in counts only exist for Campfire lotteries.
+  const sortSelect = document.getElementById('lottery-sort');
+  const hasCheckIns = entrants.some(e => e.checkIns > 0);
+  sortSelect.querySelector('option[value="checkins"]').hidden = !hasCheckIns;
+  if (entrantSort === 'checkins' && !hasCheckIns) entrantSort = 'name';
+  sortSelect.value = entrantSort;
+
   if (entrants.length === 0) {
     list.innerHTML = '<p class="empty-state">No entrants yet.</p>';
     return;
   }
 
-  list.innerHTML = entrants.map(e => {
+  list.innerHTML = sortedEntrants(entrants).map(e => {
     const key = trainerKey(e.trainerName);
     const winner = isWinner(lottery, e.trainerName);
 
@@ -767,7 +817,7 @@ document.getElementById('lottery-winner-count').addEventListener('change', async
 });
 
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-rule-recent', 'lottery-rule-weighted'].forEach(id => {
+  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
   document.querySelectorAll('#lottery-rule-lotteries input').forEach(i => { i.disabled = disabled; });
