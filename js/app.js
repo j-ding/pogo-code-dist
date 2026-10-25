@@ -2431,28 +2431,14 @@ document.getElementById('campfire-delete').addEventListener('click', async () =>
   }
 });
 
-// Phone bookmarklet. The short one loads js/campfire-bookmarklet.js from this site each time it runs, so
-// it's easy to paste and always current. The full one inlines that file with this site's address baked
-// in, for browsers where the short one can't load it.
-const campfireSite = () => location.origin + location.pathname.replace(/index\.html$/, '');
-let campfireFullBookmarklet = null;
-
-function campfireShortBookmarklet() {
-  const src = `${campfireSite()}js/campfire-bookmarklet.js?t=`;
-  return `javascript:(()=>{const s=document.createElement('script');s.src='${src}'+Date.now();document.body.appendChild(s)})()`;
-}
-
-async function buildCampfireFullBookmarklet() {
-  if (campfireFullBookmarklet) return campfireFullBookmarklet;
-  const version = document.querySelector('meta[name="app-version"]').content;
-  const res = await fetch(`js/campfire-bookmarklet.js?v=${version}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const source = (await res.text())
-    .replace(/^\/\*[\s\S]*?\*\/\s*/, '')
-    .split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('//')).join('\n')
-    .replace('__POGO_URL__', campfireSite());
-  campfireFullBookmarklet = 'javascript:' + encodeURIComponent(source);
-  return campfireFullBookmarklet;
+// Phone bookmarklet: a short bookmark that loads js/campfire-bookmarklet.js from this site each time it
+// runs, so it's easy to paste and always current. (Chrome on Android won't run a long inline one.)
+// If the script can't load, the bookmark says so instead of silently doing nothing.
+function campfireBookmarklet() {
+  const src = `${location.origin}${location.pathname.replace(/index\.html$/, '')}js/campfire-bookmarklet.js?t=`;
+  return `javascript:(()=>{const s=document.createElement('script');s.src='${src}'+Date.now();`
+    + `s.onerror=()=>alert('cfcheck could not load its script from PoGo Code Dist. Check your connection and try again.');`
+    + `document.body.appendChild(s)})()`;
 }
 
 // iPhones only allow clipboard writes straight from the tap, so nothing may be awaited before this.
@@ -2471,19 +2457,11 @@ function copyBookmarklet(text, label) {
 }
 
 document.querySelector('.campfire-phone').addEventListener('toggle', (e) => {
-  if (!e.target.open) return;
-  document.getElementById('campfire-bookmarklet-code').value = campfireShortBookmarklet();
-  buildCampfireFullBookmarklet().catch(() => {});
+  if (e.target.open) document.getElementById('campfire-bookmarklet-code').value = campfireBookmarklet();
 });
 
 document.getElementById('campfire-bookmarklet-copy').addEventListener('click', () => {
-  copyBookmarklet(campfireShortBookmarklet(), 'Bookmarklet');
-});
-
-document.getElementById('campfire-bookmarklet-full').addEventListener('click', () => {
-  if (campfireFullBookmarklet) return copyBookmarklet(campfireFullBookmarklet, 'Full bookmarklet');
-  showToast('Still loading the full version. Tap again in a moment.');
-  buildCampfireFullBookmarklet().catch(err => showToast("Couldn't load the full version: " + err.message));
+  copyBookmarklet(campfireBookmarklet(), 'Bookmarklet');
 });
 
 // The bookmarklet opens this page with #campfire=<export JSON>. Save it like an upload, replacing an
