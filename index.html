@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.9.0">
+  <meta name="app-version" content="2.10.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.9.0">
+  <link rel="stylesheet" href="css/style.css?v=2.10.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -236,6 +236,10 @@
               </select>
               <span>events</span>
             </label>
+            <label id="lottery-rule-weighted-row" class="rule-check rule-weighted hidden">
+              <input type="checkbox" id="lottery-rule-weighted">
+              <span>One entry per check-in: someone who checked in to 5 meetups in the upload gets 5 entries</span>
+            </label>
             <div class="rule-row rule-lotteries">
               <span>Also exclude winners of:</span>
               <div id="lottery-rule-lotteries" class="rule-checks"></div>
@@ -443,13 +447,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.9.0</span>
+      <span>v2.10.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.9.0"></script>
-  <script src="js/error-logger.js?v=2.9.0"></script>
-  <script src="js/auth.js?v=2.9.0"></script>
-  <script src="js/app.js?v=2.9.0"></script>
+  <script src="js/site-config.js?v=2.10.0"></script>
+  <script src="js/error-logger.js?v=2.10.0"></script>
+  <script src="js/auth.js?v=2.10.0"></script>
+  <script src="js/app.js?v=2.10.0"></script>
 </body>
 </html>

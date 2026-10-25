@@ -499,6 +499,11 @@ header h1 {
   accent-color: var(--accent);
 }
 
+.rule-weighted {
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
 .rule-check .code-meta,
 .lottery-rules summary .code-meta {
   font-size: 0.8rem;
@@ -1371,6 +1376,11 @@ header h1 {
   color: var(--text-primary);
   font-family: inherit;
   font-size: 0.85rem;
+}
+
+.badge-entries {
+  background: var(--gold-bg);
+  color: var(--gold);
 }
 
 .badge-event {

@@ -15,7 +15,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 21;
+var SCRIPT_VERSION = 22;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
@@ -176,7 +176,7 @@ function handleGet(e) {
   }
 
   if (action === 'setLotteryRules') {
-    return jsonOut(setLotteryRules(p.id || '', p.excludeRecentEvents || '0', p.excludeLotteryIds || '[]'));
+    return jsonOut(setLotteryRules(p.id || '', p.excludeRecentEvents || '0', p.excludeLotteryIds || '[]', p.entryPerCheckIn === 'true'));
   }
 
   if (action === 'getEvents') {
@@ -1402,13 +1402,16 @@ function getLotteriesSheet() {
   return sheet;
 }
 
-// Rules = { excludeRecentEvents: N, excludeLotteryIds: [...] }; they only affect the lottery they're set on.
+// Rules = { excludeRecentEvents: N, excludeLotteryIds: [...], entryPerCheckIn: bool }; they only affect the
+// lottery they're set on. entryPerCheckIn only applies to lotteries drawing from a whole Campfire upload:
+// each meetup someone checked in to is one more entry for them.
 function parseRules(value) {
   var r = {};
   try { r = JSON.parse(value || '{}') || {}; } catch (err) {}
   return {
     excludeRecentEvents: Math.max(0, Math.min(10, parseInt(r.excludeRecentEvents, 10) || 0)),
-    excludeLotteryIds: Array.isArray(r.excludeLotteryIds) ? r.excludeLotteryIds.map(String) : []
+    excludeLotteryIds: Array.isArray(r.excludeLotteryIds) ? r.excludeLotteryIds.map(String) : [],
+    entryPerCheckIn: r.entryPerCheckIn === true
   };
 }
 
@@ -1542,10 +1545,10 @@ function setWinnerCount(id, count) {
   });
 }
 
-function setLotteryRules(id, excludeRecentEvents, excludeLotteryIds) {
+function setLotteryRules(id, excludeRecentEvents, excludeLotteryIds, entryPerCheckIn) {
   var ids;
   try { ids = JSON.parse(excludeLotteryIds || '[]'); } catch (err) { return { error: 'Invalid lottery list' }; }
-  var rules = parseRules(JSON.stringify({ excludeRecentEvents: excludeRecentEvents, excludeLotteryIds: ids }));
+  var rules = parseRules(JSON.stringify({ excludeRecentEvents: excludeRecentEvents, excludeLotteryIds: ids, entryPerCheckIn: !!entryPerCheckIn }));
   rules.excludeLotteryIds = rules.excludeLotteryIds.filter(function(x) { return x !== id; });
 
   return withLock(function() {
@@ -1820,8 +1823,9 @@ function buildEntrants(found) {
     var name = resolveEntrantName(overrides, rawName);
     var key = trainerKey(name);
     if (!key || overrides.excluded.indexOf(key) !== -1) return;
-    if (!entrants[key]) entrants[key] = { trainerName: name, redeemed: false, signedUp: false, checkedIn: false, campfire: false };
+    if (!entrants[key]) entrants[key] = { trainerName: name, redeemed: false, signedUp: false, checkedIn: false, campfire: false, checkIns: 0, entries: 1 };
     entrants[key][flag] = true;
+    if (flag === 'campfire') entrants[key].checkIns++;
   }
 
   function sorted() {
@@ -1840,6 +1844,10 @@ function buildEntrants(found) {
   if (isCampfireSource(found.lottery.eventId)) {
     var source = resolveLotterySource(found.lottery.eventId);
     (source ? source.campfireNames : []).forEach(function(n) { add(n, 'campfire'); });
+    // A whole upload lists each person once per meetup they checked in to; with the rule on, each is an entry.
+    if (found.lottery.eventId.indexOf('cfx:') === 0 && found.lottery.rules.entryPerCheckIn) {
+      Object.keys(entrants).forEach(function(k) { entrants[k].entries = Math.max(1, entrants[k].checkIns); });
+    }
     return sorted();
   }
 

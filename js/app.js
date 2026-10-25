@@ -514,7 +514,8 @@ function renderLotteryEntrants() {
   const lottery = selectedLottery();
   const list = document.getElementById('lottery-list');
   const entrants = lotteryState.entrants;
-  document.getElementById('lottery-count').textContent = entrants.length;
+  const entries = entrants.reduce((n, e) => n + (e.entries || 1), 0);
+  document.getElementById('lottery-count').textContent = entries > entrants.length ? `${entrants.length} · ${entries} entries` : entrants.length;
 
   if (entrants.length === 0) {
     list.innerHTML = '<p class="empty-state">No entrants yet.</p>';
@@ -544,7 +545,8 @@ function renderLotteryEntrants() {
       e.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : '',
       e.signedUp ? '<span class="badge badge-new">Lottery sign-up</span>' : '',
       e.checkedIn ? '<span class="badge badge-new">Checked in</span>' : '',
-      e.campfire ? '<span class="badge badge-new">Campfire check-in</span>' : '',
+      e.campfire ? `<span class="badge badge-new">${e.checkIns > 1 ? `${e.checkIns} Campfire check-ins` : 'Campfire check-in'}</span>` : '',
+      e.entries > 1 ? `<span class="badge badge-entries" title="Chances in the draw">×${e.entries} entries</span>` : '',
     ].join(' ');
     const stateClass = winner ? ' is-winner' : (e.skipped || e.ineligible) ? ' is-skipped' : '';
     const winnerActions = winner
@@ -569,12 +571,19 @@ function renderLotteryEntrants() {
 }
 
 function lotteryRules(lottery) {
-  return lottery.rules || { excludeRecentEvents: 0, excludeLotteryIds: [] };
+  return lottery.rules || { excludeRecentEvents: 0, excludeLotteryIds: [], entryPerCheckIn: false };
+}
+
+// Only a lottery drawing from a whole Campfire upload can count someone more than once.
+function allowsEntryPerCheckIn(lottery) {
+  return String(lottery.eventId || '').startsWith('cfx:');
 }
 
 function renderLotteryRules(lottery) {
   const rules = lotteryRules(lottery);
   document.getElementById('lottery-rule-recent').value = String(rules.excludeRecentEvents);
+  document.getElementById('lottery-rule-weighted-row').classList.toggle('hidden', !allowsEntryPerCheckIn(lottery));
+  document.getElementById('lottery-rule-weighted').checked = !!rules.entryPerCheckIn;
 
   const others = lotteryState.lotteries.filter(l => l.id !== lottery.id);
   const box = document.getElementById('lottery-rule-lotteries');
@@ -592,8 +601,12 @@ function renderLotteryRules(lottery) {
   const parts = [];
   if (rules.excludeRecentEvents) parts.push(`last ${rules.excludeRecentEvents} event${rules.excludeRecentEvents > 1 ? 's' : ''}`);
   if (rules.excludeLotteryIds.length) parts.push(`${rules.excludeLotteryIds.length} lotter${rules.excludeLotteryIds.length > 1 ? 'ies' : 'y'}`);
-  document.getElementById('lottery-rules-summary').textContent = parts.length ? `· excluding winners from ${parts.join(' and ')}` : '· off';
-  if (parts.length) document.getElementById('lottery-rules').open = true;
+  const summary = [];
+  if (parts.length) summary.push(`excluding winners from ${parts.join(' and ')}`);
+  const weighted = rules.entryPerCheckIn && allowsEntryPerCheckIn(lottery);
+  if (weighted) summary.push('one entry per check-in');
+  document.getElementById('lottery-rules-summary').textContent = summary.length ? `· ${summary.join(' · ')}` : '· off';
+  if (summary.length) document.getElementById('lottery-rules').open = true;
 }
 
 async function saveLotteryRules() {
@@ -601,12 +614,14 @@ async function saveLotteryRules() {
   if (!lottery) return;
   const excludeRecentEvents = document.getElementById('lottery-rule-recent').value;
   const excludeLotteryIds = [...document.querySelectorAll('#lottery-rule-lotteries input:checked')].map(i => i.value);
+  const entryPerCheckIn = document.getElementById('lottery-rule-weighted').checked;
   try {
     const data = await callSheet({
       action: 'setLotteryRules',
       id: lottery.id,
       excludeRecentEvents,
       excludeLotteryIds: JSON.stringify(excludeLotteryIds),
+      entryPerCheckIn,
     });
     applyLotteryUpdate(data);
     const excluded = lotteryState.entrants.filter(e => e.ineligible).length;
@@ -619,6 +634,7 @@ async function saveLotteryRules() {
 
 document.getElementById('lottery-rule-recent').addEventListener('change', saveLotteryRules);
 document.getElementById('lottery-rule-lotteries').addEventListener('change', saveLotteryRules);
+document.getElementById('lottery-rule-weighted').addEventListener('change', saveLotteryRules);
 
 function applyLotteryUpdate(data) {
   const lottery = selectedLottery();
@@ -751,7 +767,7 @@ document.getElementById('lottery-winner-count').addEventListener('change', async
 });
 
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-rule-recent'].forEach(id => {
+  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-rule-recent', 'lottery-rule-weighted'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
   document.querySelectorAll('#lottery-rule-lotteries input').forEach(i => { i.disabled = disabled; });
@@ -798,7 +814,11 @@ async function drawOneWinner(lottery) {
     return null;
   }
 
-  const winner = pool[randomIndex(pool.length)];
+  // Each entry is one ticket, so someone with 3 entries is 3 times as likely to be drawn. Once drawn they're
+  // out of the pool, so they can't win twice.
+  const tickets = pool.reduce((n, e) => n + (e.entries || 1), 0);
+  let ticket = randomIndex(tickets);
+  const winner = pool.find(e => (ticket -= (e.entries || 1)) < 0);
   const nodes = pool.map(e => document.querySelector(`.lottery-entrant[data-key="${CSS.escape(trainerKey(e.trainerName))}"]`));
   const winnerNode = nodes[pool.indexOf(winner)];
 
@@ -1697,7 +1717,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 21;
+const REQUIRED_SCRIPT_VERSION = 22;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
