@@ -15,7 +15,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 19;
+var SCRIPT_VERSION = 20;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
@@ -139,6 +139,12 @@ function handleGet(e) {
 
   if (action === 'setGroupEnabled') {
     return jsonOut(setGroupEnabled(p.group || '', p.enabled === 'true'));
+  }
+
+  if (action === 'setGroupsEvent') {
+    var groupList = [];
+    try { groupList = JSON.parse(p.groups || '[]'); } catch (err) {}
+    return jsonOut(setGroupsEvent(groupList, p.eventId || ''));
   }
 
   if (action === 'renameGroup') {
@@ -469,22 +475,26 @@ function logScanLocked(data) {
   // Only real codes have side effects, so a forged logScan can't check people in.
   var knownCode = codeInfo ? deactivateCodeAfterRedeem(data.code) : false;
   if (knownCode && data.trainerName) {
-    addRedeemerToOpenEvents(data.trainerName, data.timestamp || new Date().toISOString(), data.deviceId || '');
+    addRedeemerToOpenEvents(data.trainerName, data.timestamp || new Date().toISOString(), data.deviceId || '', codeInfo.group);
   }
 
   return jsonOut({ success: true, repeat: isRepeat });
 }
 
 // ---------- Code groups ----------
-// A code's group is its Label. Groups tab: Group | Enabled. Pausing a group is separate from a code
-// being used, so re-enabling a group never brings back codes that were already redeemed.
+// A code's group is its Label. Groups tab: Group | Enabled | Event ID. Pausing a group is separate from a
+// code being used, so re-enabling a group never brings back codes that were already redeemed.
+// Event ID ties a group to one event: its redemptions check people into that event only, and that
+// event only takes redemptions from its tied groups. Untied groups fall back to matching by date.
 
 function getGroupsSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Groups');
   if (!sheet) {
     sheet = ss.insertSheet('Groups');
-    sheet.appendRow(['Group', 'Enabled']);
+    sheet.appendRow(['Group', 'Enabled', 'Event ID']);
+  } else if (sheet.getLastColumn() < 3) {
+    sheet.getRange(1, 3).setValue('Event ID');
   }
   return sheet;
 }
@@ -493,12 +503,43 @@ function readGroups() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Groups');
   if (!sheet) return [];
   return sheet.getDataRange().getValues().slice(1).map(function(row, i) {
-    return { row: i + 2, name: String(row[0] || '').trim(), enabled: row[1] !== 'No' };
+    return { row: i + 2, name: String(row[0] || '').trim(), enabled: row[1] !== 'No', eventId: String(row[2] || '').trim() };
   });
 }
 
 function groupsResponse() {
-  return readGroups().map(function(g) { return { name: g.name, enabled: g.enabled }; });
+  var names = {};
+  readEvents().forEach(function(r) { names[r.event.id] = r.event.name; });
+  return readGroups().map(function(g) {
+    var tied = g.eventId && names[g.eventId] !== undefined;
+    return { name: g.name, enabled: g.enabled, eventId: tied ? g.eventId : '', eventName: tied ? names[g.eventId] : '' };
+  });
+}
+
+// eventId '' unties the groups so their redemptions go back to matching events by date.
+function setGroupsEvent(groups, eventId) {
+  eventId = String(eventId || '').trim();
+  var names = (groups || []).map(function(g) { return String(g).trim(); });
+  return withLock(function() {
+    if (eventId && !findEvent(eventId)) return { error: 'Event not found' };
+    var sheet = getGroupsSheet();
+    var existing = readGroups();
+    names.forEach(function(name) {
+      var row = existing.filter(function(g) { return g.name === name; })[0];
+      if (row) sheet.getRange(row.row, 3).setValue(eventId);
+      else if (eventId) sheet.appendRow([name, 'Yes', eventId]);
+    });
+    return { success: true, groups: groupsResponse() };
+  });
+}
+
+// { groupName: eventId } for groups tied to an event that still exists.
+function groupEventMap() {
+  var ids = {};
+  readEvents().forEach(function(r) { ids[r.event.id] = true; });
+  var map = {};
+  readGroups().forEach(function(g) { if (g.eventId && ids[g.eventId]) map[g.name] = g.eventId; });
+  return map;
 }
 
 function setGroupEnabled(group, enabled) {
@@ -1123,6 +1164,7 @@ function deleteEvent(id) {
       return { error: 'Lottery "' + usedBy[0].lottery.name + '" uses this event. Delete it or switch it to another event first.' };
     }
     getEventsSheet().deleteRow(found.row);
+    readGroups().forEach(function(g) { if (g.eventId === id) getGroupsSheet().getRange(g.row, 3).setValue(''); });
     var removed = deleteRowsWhere(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CheckIns'), function(r) {
       return String(r[1]) === id;
     });
@@ -1152,10 +1194,15 @@ function withRedeemedCodes(ev, attendees) {
   if (!scanSheet) return attendees;
 
   var w = eventWindow(ev);
+  var ties = groupEventMap();
+  var hasTies = Object.keys(ties).some(function(g) { return ties[g] === ev.id; });
   scanSheet.getDataRange().getValues().slice(1).forEach(function(row) {
     var a = byKey[trainerKey(row[2])];
     var ts = new Date(row[0]);
-    if (!a || !row[1] || isNaN(ts.getTime()) || ts < w.since || ts >= w.until) return;
+    if (!a || !row[1] || isNaN(ts.getTime())) return;
+    var tiedTo = ties[String(row[14] || '').trim()] || '';
+    // Same rule as addRedeemerToOpenEvents: tied codes belong to their event, the rest go by date.
+    if (tiedTo ? tiedTo !== ev.id : (hasTies || ts < w.since || ts >= w.until)) return;
     var code = String(row[1]).trim().toUpperCase();
     if (a.codes.some(function(c) { return c.code === code; })) return;
     a.codes.push({ code: code, timestamp: ts.toISOString() });
@@ -1197,19 +1244,31 @@ function checkIn(id, trainerName, deviceId) {
   });
 }
 
-// Caller (logScan) already holds the script lock.
-function addRedeemerToOpenEvents(trainerName, timestamp, deviceId) {
+// Caller (logScan) already holds the script lock. A code from a group tied to an event checks the trainer
+// into that event (any day, while it's open). Other codes go to open events running that day that
+// don't have groups of their own tied to them.
+function addRedeemerToOpenEvents(trainerName, timestamp, deviceId, group) {
   var key = trainerKey(trainerName);
   var ts = new Date(timestamp);
   if (!key || isNaN(ts.getTime())) return;
+
+  var ties = groupEventMap();
+  var tiedEvent = ties[group || ''] || '';
+  var eventsWithTies = {};
+  Object.keys(ties).forEach(function(g) { eventsWithTies[ties[g]] = true; });
 
   var rows = checkInRows();
   var sheet = null;
   readEvents().forEach(function(r) {
     var ev = r.event;
     if (!ev.open) return;
-    var w = eventWindow(ev);
-    if (ts < w.since || ts >= w.until) return;
+    if (tiedEvent) {
+      if (ev.id !== tiedEvent) return;
+    } else {
+      if (eventsWithTies[ev.id]) return;
+      var w = eventWindow(ev);
+      if (ts < w.since || ts >= w.until) return;
+    }
     var already = rows.some(function(row) { return String(row[1]) === ev.id && trainerKey(row[2]) === key; });
     if (already) return;
     sheet = sheet || getCheckInsSheet();

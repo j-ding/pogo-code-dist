@@ -1,6 +1,7 @@
 const STORAGE_KEYS = {
   CODES: 'pogo_codes',
   GROUPS: 'pogo_groups',
+  GROUP_EVENTS: 'pogo_group_events',
   SCRIPT_URL: 'pogo_script_url',
 };
 
@@ -17,6 +18,14 @@ function saveGroupStates(list) {
   const states = {};
   (list || []).forEach(g => { states[g.name] = g.enabled !== false; });
   try { localStorage.setItem(STORAGE_KEYS.GROUPS, JSON.stringify(states)); } catch {}
+  const events = {};
+  (list || []).forEach(g => { if (g.eventId) events[g.name] = { id: g.eventId, name: g.eventName || '' }; });
+  try { localStorage.setItem(STORAGE_KEYS.GROUP_EVENTS, JSON.stringify(events)); } catch {}
+}
+
+// The event a group is tied to ({ id, name }), or null when its redemptions go by date.
+function groupEvent(name) {
+  try { return (JSON.parse(localStorage.getItem(STORAGE_KEYS.GROUP_EVENTS)) || {})[name] || null; } catch { return null; }
 }
 
 function isGroupEnabled(name) {
@@ -1475,6 +1484,7 @@ function renderCodesList() {
         <summary class="code-group-summary">
           <span class="code-group-name">${escapeHtml(groupDisplayName(name))}</span>
           <span class="badge ${enabled ? 'badge-active' : 'badge-inactive'}">${enabled ? 'Enabled' : 'Paused'}</span>
+          ${groupEvent(name) ? `<span class="badge badge-event" title="Redemptions check in to this event">${escapeHtml(groupEvent(name).name)}</span>` : ''}
           <span class="code-meta">${unused.length} unused · ${used.length} used</span>
           <span class="code-group-actions">
             <button type="button" class="btn btn-small ${enabled ? 'btn-warning' : 'btn-primary'}" data-group-action="toggle">${enabled ? 'Pause' : 'Enable'}</button>
@@ -1660,7 +1670,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 19;
+const REQUIRED_SCRIPT_VERSION = 20;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -1760,13 +1770,14 @@ function activeTabName() {
 
 // Background refresh used when opening code tabs; returns whether anything changed.
 async function refreshCodesQuietly() {
-  const before = localStorage.getItem(STORAGE_KEYS.CODES) + '|' + localStorage.getItem(STORAGE_KEYS.GROUPS);
+  const snapshot = () => [STORAGE_KEYS.CODES, STORAGE_KEYS.GROUPS, STORAGE_KEYS.GROUP_EVENTS].map(k => localStorage.getItem(k)).join('|');
+  const before = snapshot();
   try {
     await syncCodesFromSheet();
   } catch {
     return false;
   }
-  return before !== localStorage.getItem(STORAGE_KEYS.CODES) + '|' + localStorage.getItem(STORAGE_KEYS.GROUPS);
+  return before !== snapshot();
 }
 
 async function syncAndRender(silent) {
@@ -1949,7 +1960,53 @@ function initDisplay() {
   displayIndex = 0;
   renderDisplayQR();
   startDisplayPolling();
+  renderDisplayEventPicker();
+  loadEvents().then(renderDisplayEventPicker);
 }
+
+// Ties every group in the display queue to one event, so their redemptions check people in there
+// (and into its lotteries) instead of into whatever events happen to be running that day.
+function displayedGroups() {
+  return [...new Set(getDisplayCodes().map(groupOf))];
+}
+
+function renderDisplayEventPicker() {
+  const select = document.getElementById('display-event');
+  const tied = displayedGroups().map(g => (groupEvent(g) || {}).id || '');
+  const current = tied.every(id => id === tied[0]) ? (tied[0] || '') : 'mixed';
+  const events = eventState.events.filter(ev => ev.open || ev.id === current);
+  // An event this device hasn't loaded yet still shows by the name the sheet sent with the group.
+  if (current && current !== 'mixed' && !events.some(ev => ev.id === current)) {
+    const g = displayedGroups().find(name => (groupEvent(name) || {}).id === current);
+    events.unshift({ id: current, name: groupEvent(g).name, date: '' });
+  }
+  select.innerHTML = '<option value="">Any open event that day</option>'
+    + (current === 'mixed' ? '<option value="mixed" disabled>Mixed: groups go to different events</option>' : '')
+    + events.map(ev => {
+      const day = ev.date ? ' · ' + new Date(ev.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+      return `<option value="${escapeHtml(ev.id)}">${escapeHtml(ev.name + day)}</option>`;
+    }).join('');
+  select.value = current;
+}
+
+document.getElementById('display-event').addEventListener('change', async (e) => {
+  const select = e.target;
+  const groups = displayedGroups();
+  if (!groups.length) return;
+  select.disabled = true;
+  try {
+    const data = await callSheet({ action: 'setGroupsEvent', groups: JSON.stringify(groups), eventId: select.value });
+    if (data.error) throw new Error(data.error);
+    saveGroupStates(data.groups);
+    const label = select.value ? select.selectedOptions[0].textContent : 'any open event that day';
+    showToast(`Redemptions of these codes now check in to ${label}.`);
+  } catch (err) {
+    showToast(`Couldn't save: ${err.message}`);
+  } finally {
+    select.disabled = false;
+    renderDisplayEventPicker();
+  }
+});
 
 // Auto-advance: while the Display tab is open, poll the code on screen. Once it's redeemed, flash
 // "Redeemed!", move to the next active code, and after the last one switch to Check In.
