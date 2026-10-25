@@ -2431,14 +2431,19 @@ document.getElementById('campfire-delete').addEventListener('click', async () =>
   }
 });
 
-// Phone bookmarklet: a short bookmark that loads js/campfire-bookmarklet.js from this site each time it
-// runs, so it's easy to paste and always current. (Chrome on Android won't run a long inline one.)
-// If the script can't load, the bookmark says so instead of silently doing nothing.
+// Phone bookmarklet. It has to stay short (Chrome on Android won't run a long one), and Campfire's page
+// blocks scripts loaded from other sites, so the bookmark opens cfcheck.html, which messages the current
+// js/campfire-bookmarklet.js back to it. The bookmark only runs messages from this site, and always shows
+// something: the script's panel, or an alert saying why it couldn't start.
 function campfireBookmarklet() {
-  const src = `${location.origin}${location.pathname.replace(/index\.html$/, '')}js/campfire-bookmarklet.js?t=`;
-  return `javascript:(()=>{const s=document.createElement('script');s.src='${src}'+Date.now();`
-    + `s.onerror=()=>alert('cfcheck could not load its script from PoGo Code Dist. Check your connection and try again.');`
-    + `document.body.appendChild(s)})()`;
+  const page = `${location.origin}${location.pathname.replace(/index\.html$/, '')}cfcheck.html`;
+  return `javascript:(()=>{const w=open('${page}','pogocf');`
+    + `if(!w){alert('cfcheck needs pop-ups. Allow pop-ups for campfire.scopely.com in Chrome site settings, then try again.');return}`
+    + `const t=setTimeout(()=>{removeEventListener('message',h);alert('cfcheck did not hear back from PoGo Code Dist. Check your connection and try again.')},20000);`
+    + `function h(e){if(e.origin!=='${location.origin}'||e.source!==w)return;removeEventListener('message',h);clearTimeout(t);`
+    + `if(e.data.cfcheckError)return alert('cfcheck could not load: '+e.data.cfcheckError);`
+    + `try{(0,eval)(e.data.cfcheck)}catch(x){alert('cfcheck hit an error: '+x.message)}}`
+    + `addEventListener('message',h)})()`;
 }
 
 // iPhones only allow clipboard writes straight from the tap, so nothing may be awaited before this.

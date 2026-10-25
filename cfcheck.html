@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cfcheck</title>
+  <style>
+    :root { --bg: #f6f8fa; --text: #1f2328; --muted: #59636e; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --text: #e6edf3; --muted: #8b949e; } }
+    body { margin: 0; padding: 32px 16px; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, system-ui, sans-serif; text-align: center; }
+    p { max-width: 420px; margin: 0 auto 12px; }
+    .muted { color: var(--muted); font-size: 14px; }
+  </style>
+</head>
+<body>
+  <p id="status">Loading cfcheck…</p>
+  <p class="muted" id="detail"></p>
+  <script>
+    // Campfire's page only allows scripts from its own servers, so the cfcheck bookmark can't load
+    // js/campfire-bookmarklet.js directly. It opens this page instead; this page hands the script back
+    // as a message (which the bookmark runs) and closes itself.
+    (async () => {
+      const status = document.getElementById('status');
+      const detail = document.getElementById('detail');
+      if (!window.opener) {
+        status.textContent = 'This page is used by the cfcheck bookmark.';
+        detail.textContent = 'Open a Campfire meetup page and run cfcheck from there.';
+        return;
+      }
+      try {
+        const site = location.origin + location.pathname.replace(/cfcheck(\.html)?$/, '');
+        const res = await fetch('js/campfire-bookmarklet.js?t=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const code = 'window.__pogoCfSite = ' + JSON.stringify(site) + ';\n' + await res.text();
+        // The script is public, so any opener may receive it; the bookmark checks that it came from this site.
+        window.opener.postMessage({ cfcheck: code }, '*');
+        status.textContent = 'cfcheck loaded. Going back to Campfire…';
+        setTimeout(() => window.close(), 300);
+      } catch (err) {
+        window.opener.postMessage({ cfcheckError: String(err.message || err) }, '*');
+        status.textContent = "Couldn't load cfcheck: " + (err.message || err);
+        detail.textContent = 'Check your connection, close this tab, and try again.';
+      }
+    })();
+  </script>
+</body>
+</html>

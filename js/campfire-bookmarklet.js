@@ -1,13 +1,14 @@
 /*
- * Campfire check-in bookmarklet. The bookmark from Settings > Campfire Exports loads this file from the site.
+ * Campfire check-in bookmarklet. The bookmark from Settings > Campfire Exports opens cfcheck.html, which
+ * sends this file back to the Campfire tab to run (Campfire's page blocks scripts loaded from other sites).
  * Tapped on a campfire.scopely.com meetup page, it reads the meetup's attendance with the logged-in
  * Campfire session, shows who checked in, and can send the result to PoGo Code Dist.
  */
 (async () => {
   // Every failure ends in a visible message, so tapping the bookmark never seems to do nothing.
   try {
-    // Meetups are sent back to the site this file was loaded from.
-    const SITE = document.currentScript.src.replace(/js\/campfire-bookmarklet\.js.*$/, '');
+    // cfcheck.html sets the site address before handing this script to the bookmark; meetups are sent there.
+    const SITE = window.__pogoCfSite;
     const API = 'https://niantic-social-api.nianticlabs.com/graphql';
     const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
     const QUERY = `query GetEvent($eventId: ID!) { event(id: $eventId) { id name address eventTime eventEndTime checkedInMembersCount
