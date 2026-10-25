@@ -49,16 +49,23 @@
     }
     eventId = eventId.toLowerCase();
 
-    // Campfire may sign API calls with just the login cookie, or with a token the page keeps in storage.
-    // Try the cookie first, then any token-looking values, and remember which way worked on this phone.
+    // The API allows any origin (Access-Control-Allow-Origin: *), which browsers never combine with cookies,
+    // so Campfire's own app must sign each call with a token from the page's storage. Find token-looking
+    // values, noting where each came from so a failure can say what was tried.
     const JWT = /eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}/g;
+    const storageKeys = [];
     async function findTokens() {
-      const found = new Set();
-      for (const store of [localStorage, sessionStorage]) {
+      const found = new Map();
+      const add = (text, from) => (String(text).match(JWT) || []).forEach((t) => { if (!found.has(t)) found.set(t, from); });
+      for (const [name, store] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]]) {
         try {
-          for (let i = 0; i < store.length; i++) (String(store.getItem(store.key(i))).match(JWT) || []).forEach((t) => found.add(t));
+          for (let i = 0; i < store.length; i++) {
+            storageKeys.push(store.key(i));
+            add(store.getItem(store.key(i)), `${name} "${store.key(i)}"`);
+          }
         } catch (_) {}
       }
+      document.cookie.split(';').forEach((c) => add(decodeURIComponent(c.slice(c.indexOf('=') + 1)), `cookie "${c.split('=')[0].trim()}"`));
       // Opening a database that doesn't exist would create an empty one and could break the site's own
       // login storage, so only open it if it's already there.
       // Some browsers never answer these calls, so give up on them after a couple of seconds.
@@ -69,17 +76,17 @@
           const db = await within(new Promise((ok, bad) => { const r = indexedDB.open('firebaseLocalStorageDb'); r.onsuccess = () => ok(r.result); r.onerror = bad; }));
           if (db.objectStoreNames.contains('firebaseLocalStorage')) {
             const rows = await within(new Promise((ok, bad) => { const r = db.transaction('firebaseLocalStorage').objectStore('firebaseLocalStorage').getAll(); r.onsuccess = () => ok(r.result); r.onerror = bad; }));
-            (JSON.stringify(rows).match(JWT) || []).forEach((t) => found.add(t));
+            add(JSON.stringify(rows), 'firebase storage');
           }
           db.close();
         }
       } catch (_) {}
-      return [...found].slice(0, 6);
+      return [...found].slice(0, 6).map(([token, from]) => ({ token, from }));
     }
 
-    async function ask(headers, credentials) {
+    async function ask(headers) {
       const res = await fetch(API, {
-        method: 'POST', credentials,
+        method: 'POST', credentials: 'omit',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...headers },
         body: JSON.stringify({ operationName: 'GetEvent', query: QUERY, variables: { eventId } }),
       });
@@ -90,12 +97,18 @@
 
     async function load() {
       const tried = [];
-      const attempts = [{ how: 'login cookie', headers: {} }];
-      let searched = false;
-      for (let i = 0; i < attempts.length; i++) {
-        const a = attempts[i];
+      const attempts = [];
+      (await findTokens()).forEach(({ token, from }, n) => {
+        attempts.push({ how: `token ${n + 1} from ${from}`, headers: { Authorization: 'Bearer ' + token } });
+        attempts.push({ how: `token ${n + 1} without "Bearer"`, headers: { Authorization: token } });
+      });
+      if (!attempts.length) {
+        throw new Error("Couldn't find your Campfire login on this page. Make sure you're logged in, reload the page, and try again."
+          + `\n\nStorage keys seen: ${storageKeys.join(', ') || '(none)'}`);
+      }
+      for (const a of attempts) {
         try {
-          const { status, json } = await ask(a.headers, 'include');
+          const { status, json } = await ask(a.headers);
           const ev = json && json.data && json.data.event;
           if (ev) return { ev, how: a.how };
           const msg = json && json.errors && json.errors[0] && json.errors[0].message;
@@ -107,12 +120,9 @@
           if (/no meetup/.test(err.message)) throw err;
           tried.push(`${a.how}: ${err.message}`);
         }
-        if (!searched) {
-          searched = true;
-          (await findTokens()).forEach((t, n) => attempts.push({ how: 'saved token ' + (n + 1), headers: { Authorization: 'Bearer ' + t } }));
-        }
       }
-      throw new Error('Campfire did not accept any sign-in method. Make sure you are logged in on this page.\n\nTried:\n' + tried.join('\n'));
+      throw new Error('Campfire did not accept any sign-in method. Make sure you are logged in on this page.\n\nTried:\n' + tried.join('\n')
+        + `\n\nStorage keys seen: ${storageKeys.join(', ') || '(none)'}`);
     }
 
     function toExport(ev) {
