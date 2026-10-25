@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.5.1">
+  <meta name="app-version" content="2.6.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.5.1">
+  <link rel="stylesheet" href="css/style.css?v=2.6.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -377,6 +377,24 @@
           <button type="button" id="reset-tab-order" class="btn btn-secondary">Reset Tab Order</button>
         </div>
 
+        <div class="card" id="campfire-card">
+          <div class="codes-header">
+            <h2>Campfire Exports</h2>
+            <label class="btn btn-small btn-primary campfire-upload">
+              <input type="file" id="campfire-file" accept=".json,application/json" multiple hidden>
+              <span id="campfire-upload-label">Upload JSON</span>
+            </label>
+          </div>
+          <p class="card-note">Upload exports from the Campfire meetup tracker. They're saved to your Google Sheet, so every device can view them.</p>
+          <div class="campfire-picker">
+            <select id="campfire-select" aria-label="Choose an uploaded export">
+              <option value="">No exports uploaded yet</option>
+            </select>
+            <button type="button" id="campfire-delete" class="btn btn-small btn-danger" disabled>Delete</button>
+          </div>
+          <div id="campfire-view" class="campfire-view"></div>
+        </div>
+
         <div class="card">
           <h2>Error Log</h2>
           <div class="log-controls">
@@ -402,13 +420,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.5.1</span>
+      <span>v2.6.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.5.1"></script>
-  <script src="js/error-logger.js?v=2.5.1"></script>
-  <script src="js/auth.js?v=2.5.1"></script>
-  <script src="js/app.js?v=2.5.1"></script>
+  <script src="js/site-config.js?v=2.6.0"></script>
+  <script src="js/error-logger.js?v=2.6.0"></script>
+  <script src="js/auth.js?v=2.6.0"></script>
+  <script src="js/app.js?v=2.6.0"></script>
 </body>
 </html>

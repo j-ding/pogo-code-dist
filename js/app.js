@@ -108,6 +108,7 @@ function activateTab(name) {
   if (name === 'settings') {
     loadScanLog();
     initCommunity();
+    loadCampfireList();
   }
   if (name === 'checkin') initCheckIn();
   if (name === 'lottery') initLottery();
@@ -1652,7 +1653,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 18;
+const REQUIRED_SCRIPT_VERSION = 19;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -2112,6 +2113,258 @@ document.addEventListener('keydown', (e) => {
   if (!displayTab.classList.contains('active')) return;
   if (e.key === 'ArrowLeft') { displayIndex--; renderDisplayQR(); }
   if (e.key === 'ArrowRight') { displayIndex++; renderDisplayQR(); }
+});
+
+// Campfire exports (uploaded JSON from the Campfire meetup tracker, stored in the sheet)
+const CAMPFIRE_STATUS = {
+  CHECKED_IN: { label: 'Checked in', badge: 'badge-active' },
+  ACCEPTED: { label: "RSVP'd, didn't check in", badge: 'badge-expired' },
+  DECLINED: { label: 'Declined', badge: 'badge-inactive' },
+};
+const campfireState = { exports: [], cache: new Map(), view: 'events', selectedId: null };
+
+// Uploads are too large for a GET URL, so this one call is a POST. text/plain avoids a CORS preflight.
+async function postSheet(payload) {
+  const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
+  const res = await fetch(scriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ ...payload, t: getAuthToken() }),
+  });
+  const data = await res.json();
+  if (data.unauthorized) {
+    clearSession();
+    showLogin('Your session expired. Please log in again.');
+    throw new Error('Not logged in');
+  }
+  if (data.error === 'Unknown action') throw new Error('Apps Script is outdated — paste the latest google-apps-script.js and redeploy');
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+function campfireOptionLabel(x) {
+  const when = x.exportedAt ? new Date(x.exportedAt) : null;
+  const date = when && !isNaN(when) ? when.toLocaleDateString() : 'unknown date';
+  return `${x.name} · exported ${date} · ${x.events} events, ${x.people} people`;
+}
+
+async function loadCampfireList() {
+  const select = document.getElementById('campfire-select');
+  try {
+    const data = await callSheet({ action: 'listCampfire' });
+    campfireState.exports = data.exports || [];
+  } catch (err) {
+    document.getElementById('campfire-view').innerHTML = `<p class="empty-state">Couldn't load exports: ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+
+  if (!campfireState.exports.length) {
+    select.innerHTML = '<option value="">No exports uploaded yet</option>';
+    document.getElementById('campfire-delete').disabled = true;
+    document.getElementById('campfire-view').innerHTML = '';
+    return;
+  }
+
+  let saved = null;
+  try { saved = localStorage.getItem('pogo_campfire_selected'); } catch {}
+  const exists = id => campfireState.exports.some(x => x.id === id);
+  const id = exists(campfireState.selectedId) ? campfireState.selectedId : exists(saved) ? saved : campfireState.exports[0].id;
+
+  select.innerHTML = campfireState.exports.map(x => `<option value="${escapeHtml(x.id)}">${escapeHtml(campfireOptionLabel(x))}</option>`).join('');
+  select.value = id;
+  document.getElementById('campfire-delete').disabled = false;
+  showCampfire(id);
+}
+
+async function showCampfire(id) {
+  campfireState.selectedId = id;
+  try { localStorage.setItem('pogo_campfire_selected', id); } catch {}
+  const view = document.getElementById('campfire-view');
+  if (!campfireState.cache.has(id)) {
+    view.innerHTML = '<p class="empty-state">Loading export...</p>';
+    try {
+      const data = await callSheet({ action: 'getCampfire', id });
+      campfireState.cache.set(id, data.data);
+    } catch (err) {
+      view.innerHTML = `<p class="empty-state">Couldn't load this export: ${escapeHtml(err.message)}</p>`;
+      return;
+    }
+  }
+  if (campfireState.selectedId === id) renderCampfire(campfireState.cache.get(id));
+}
+
+function formatEventTime(start, end) {
+  const s = new Date(start);
+  if (isNaN(s)) return '';
+  const day = s.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  const time = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const e = new Date(end);
+  return `${day} · ${time(s)}${isNaN(e) ? '' : '–' + time(e)}`;
+}
+
+function renderCampfire(data) {
+  const view = document.getElementById('campfire-view');
+  const events = [...(data.events || [])].sort((a, b) => String(b.startTime).localeCompare(String(a.startTime)));
+  const people = data.people || [];
+  const totals = data.totals || {};
+  const stat = (value, label) => `<div class="campfire-stat"><span class="campfire-stat-value">${Number(value || 0).toLocaleString()}</span><span class="campfire-stat-label">${label}</span></div>`;
+  const exported = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'unknown';
+
+  view.innerHTML = `
+    <p class="code-meta campfire-meta">Exported ${escapeHtml(exported)}${data.source ? ' from ' + escapeHtml(data.source) : ''}</p>
+    <div class="campfire-stats">
+      ${stat(totals.events ?? events.length, 'Events')}
+      ${stat(totals.checkIns, 'Check-ins')}
+      ${stat(totals.uniquePeopleCheckedIn, 'People checked in')}
+      ${stat(totals.rsvpOnly, "RSVP'd, no check-in")}
+      ${stat(totals.uniquePeople ?? people.length, 'People total')}
+    </div>
+    <div class="campfire-tabs" role="tablist">
+      <button type="button" class="btn btn-small ${campfireState.view === 'events' ? 'btn-primary' : 'btn-secondary'}" data-campfire-view="events">Events (${events.length})</button>
+      <button type="button" class="btn btn-small ${campfireState.view === 'people' ? 'btn-primary' : 'btn-secondary'}" data-campfire-view="people">People (${people.length})</button>
+    </div>
+    <div id="campfire-body"></div>
+  `;
+  if (campfireState.view === 'events') renderCampfireEvents(events);
+  else renderCampfirePeople(people, events);
+}
+
+function renderCampfireEvents(events) {
+  const body = document.getElementById('campfire-body');
+  if (!events.length) {
+    body.innerHTML = '<p class="empty-state">This export has no events.</p>';
+    return;
+  }
+  body.innerHTML = `<div class="campfire-list">${events.map(ev => {
+    const counts = ev.counts || {};
+    const byStatus = { CHECKED_IN: [], ACCEPTED: [], DECLINED: [] };
+    (ev.attendees || []).forEach(a => (byStatus[a.status] || (byStatus[a.status] = [])).push(a.name));
+    const sections = Object.keys(byStatus).filter(s => byStatus[s].length).map(s => `
+      <div class="campfire-attendees">
+        <h4>${escapeHtml((CAMPFIRE_STATUS[s] || { label: s }).label)} (${byStatus[s].length})</h4>
+        <div class="campfire-names">${byStatus[s].sort((a, b) => String(a).localeCompare(String(b))).map(n => `<span class="campfire-name">${escapeHtml(n)}</span>`).join('')}</div>
+      </div>
+    `).join('');
+    const details = [
+      ev.group && ev.group.name ? `<div><span class="code-meta">Group</span> ${escapeHtml(ev.group.name)}</div>` : '',
+      ev.host ? `<div><span class="code-meta">Host</span> ${escapeHtml(ev.host)}</div>` : '',
+      ev.address ? `<div><span class="code-meta">Where</span> ${escapeHtml(ev.address)}</div>` : '',
+      /^https:\/\//.test(ev.url || '') ? `<div><a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">Open in Campfire</a></div>` : '',
+    ].join('');
+    return `
+      <details class="trainer-row campfire-event">
+        <summary>
+          <span class="campfire-event-title">
+            <span class="lottery-name">${escapeHtml(ev.name || 'Untitled event')}</span>
+            <span class="code-meta">${escapeHtml(formatEventTime(ev.startTime, ev.endTime))}</span>
+          </span>
+          <span class="trainer-stats">
+            <span class="badge badge-active">${counts.checkedIn ?? byStatus.CHECKED_IN.length} checked in</span>
+            <span class="badge badge-expired">${counts.rsvpOnly ?? byStatus.ACCEPTED.length} RSVP only</span>
+          </span>
+        </summary>
+        <div class="campfire-event-body">
+          <div class="campfire-details">${details}</div>
+          ${sections || '<p class="code-meta">No attendees listed.</p>'}
+        </div>
+      </details>
+    `;
+  }).join('')}</div>`;
+}
+
+function renderCampfirePeople(people, events) {
+  const body = document.getElementById('campfire-body');
+  const eventsById = new Map(events.map(e => [e.id, e]));
+  body.innerHTML = `
+    <div class="form-group campfire-search">
+      <input type="search" id="campfire-people-search" placeholder="Search names" autocomplete="off" aria-label="Search people">
+    </div>
+    <div id="campfire-people" class="campfire-list"></div>
+  `;
+  const sorted = [...people].sort((a, b) => (b.checkedInCount || 0) - (a.checkedInCount || 0) || String(a.name).localeCompare(String(b.name)));
+  const draw = () => {
+    const q = document.getElementById('campfire-people-search').value.trim().toLowerCase();
+    const shown = q ? sorted.filter(p => String(p.name || '').toLowerCase().includes(q)) : sorted;
+    document.getElementById('campfire-people').innerHTML = shown.length ? shown.map(p => {
+      const history = (p.events || []).map(pe => ({ ev: eventsById.get(pe.eventId), status: pe.status }))
+        .sort((a, b) => String(b.ev && b.ev.startTime).localeCompare(String(a.ev && a.ev.startTime)));
+      return `
+        <details class="trainer-row">
+          <summary>
+            <span class="lottery-name">${escapeHtml(p.name || 'Unknown')}</span>
+            <span class="trainer-stats">
+              <span class="badge badge-active">${plural(p.checkedInCount || 0, 'check-in')}</span>
+              ${p.rsvpOnlyCount ? `<span class="badge badge-expired">${p.rsvpOnlyCount} RSVP only</span>` : ''}
+            </span>
+          </summary>
+          <div class="campfire-event-body">
+            <ul class="campfire-history">${history.map(h => `
+              <li>
+                <span>${escapeHtml(h.ev ? h.ev.name : 'Event not in this export')}</span>
+                <span class="code-meta">${h.ev ? escapeHtml(formatEventTime(h.ev.startTime)) : ''}</span>
+                <span class="badge ${(CAMPFIRE_STATUS[h.status] || {}).badge || 'badge-inactive'}">${escapeHtml((CAMPFIRE_STATUS[h.status] || { label: h.status }).label)}</span>
+              </li>`).join('')}
+            </ul>
+          </div>
+        </details>
+      `;
+    }).join('') : '<p class="empty-state">No names match that search.</p>';
+  };
+  document.getElementById('campfire-people-search').addEventListener('input', draw);
+  draw();
+}
+
+document.getElementById('campfire-view').addEventListener('click', (e) => {
+  const tab = e.target.closest('[data-campfire-view]');
+  if (!tab) return;
+  campfireState.view = tab.dataset.campfireView;
+  const data = campfireState.cache.get(campfireState.selectedId);
+  if (data) renderCampfire(data);
+});
+
+document.getElementById('campfire-select').addEventListener('change', (e) => {
+  if (e.target.value) showCampfire(e.target.value);
+});
+
+document.getElementById('campfire-file').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+  const label = document.getElementById('campfire-upload-label');
+  let lastId = null;
+  let failures = 0;
+  for (const [i, file] of files.entries()) {
+    label.textContent = files.length > 1 ? `Uploading ${i + 1}/${files.length}...` : 'Uploading...';
+    try {
+      const text = await file.text();
+      JSON.parse(text);
+      const data = await postSheet({ action: 'uploadCampfire', name: file.name, json: text });
+      lastId = data.export.id;
+    } catch (err) {
+      failures++;
+      showToast(`${file.name}: ${err instanceof SyntaxError ? "isn't valid JSON" : err.message}`);
+    }
+  }
+  label.textContent = 'Upload JSON';
+  if (lastId) {
+    campfireState.selectedId = lastId;
+    await loadCampfireList();
+    if (!failures) showToast(files.length > 1 ? `${files.length} exports uploaded` : 'Export uploaded');
+  }
+});
+
+document.getElementById('campfire-delete').addEventListener('click', async () => {
+  const x = campfireState.exports.find(e => e.id === campfireState.selectedId);
+  if (!x || !confirm(`Delete "${x.name}" from the sheet? This can't be undone.`)) return;
+  try {
+    await callSheet({ action: 'deleteCampfire', id: x.id });
+    campfireState.cache.delete(x.id);
+    campfireState.selectedId = null;
+    await loadCampfireList();
+    showToast('Export deleted');
+  } catch (err) {
+    showToast('Could not delete: ' + err.message);
+  }
 });
 
 // Called by auth.js once a valid admin session exists (after login, or on load with a saved session).

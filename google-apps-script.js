@@ -15,7 +15,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 18;
+var SCRIPT_VERSION = 19;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
@@ -155,6 +155,18 @@ function handleGet(e) {
 
   if (action === 'getTrainerHistory') {
     return jsonOut({ trainers: getTrainerHistory() });
+  }
+
+  if (action === 'listCampfire') {
+    return jsonOut(listCampfire());
+  }
+
+  if (action === 'getCampfire') {
+    return jsonOut(getCampfire(p.id || ''));
+  }
+
+  if (action === 'deleteCampfire') {
+    return jsonOut(deleteCampfire(p.id || ''));
   }
 
   if (action === 'setLotteryRules') {
@@ -308,10 +320,89 @@ function doPost(e) {
     var data = JSON.parse(e.postData.contents);
     if (data.action === 'logScan') return logScan(data);
     if (data.action === 'logError') return logError(data);
+    // Campfire uploads are too large for a GET URL, so they're the one admin action sent by POST.
+    if (data.action === 'uploadCampfire') {
+      if (!isAuthorized(data.t)) return jsonOut({ error: 'Unauthorized', unauthorized: true });
+      return jsonOut(uploadCampfire(data.name || '', data.json || ''));
+    }
     return jsonOut({ error: 'Unknown action' });
   } catch (err) {
     return jsonOut(errorResponse(err));
   }
+}
+
+// ---------- Campfire exports ----------
+// CampfireExports tab: Id | File Name | Uploaded At | Exported At | Events | People | Data...
+// Sheets cap a cell at 50,000 characters, so the JSON is split across as many Data columns as it needs.
+
+var CAMPFIRE_CHUNK = 45000;
+var CAMPFIRE_DATA_COL = 7;
+
+function campfireSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CampfireExports');
+  if (!sheet) {
+    sheet = ss.insertSheet('CampfireExports');
+    sheet.appendRow(['Id', 'File Name', 'Uploaded At', 'Exported At', 'Events', 'People', 'Data']);
+  }
+  return sheet;
+}
+
+function uploadCampfire(name, json) {
+  var parsed;
+  try { parsed = JSON.parse(json); } catch (err) { return { error: 'That file isn\'t valid JSON.' }; }
+  if (!parsed || !Array.isArray(parsed.events) || !Array.isArray(parsed.people)) {
+    return { error: 'That doesn\'t look like a Campfire export (no events or people list).' };
+  }
+  var compact = JSON.stringify(parsed);
+  var parts = [];
+  for (var i = 0; i < compact.length; i += CAMPFIRE_CHUNK) parts.push(compact.slice(i, i + CAMPFIRE_CHUNK));
+
+  return withLock(function() {
+    var sheet = campfireSheet();
+    var id = Utilities.getUuid().split('-')[0];
+    var row = [id, String(name).slice(0, 120), new Date().toISOString(), parsed.exportedAt || '',
+      parsed.events.length, parsed.people.length].concat(parts);
+    sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+    return { success: true, export: campfireSummary(row) };
+  });
+}
+
+function campfireSummary(row) {
+  return {
+    id: String(row[0]), name: String(row[1]), uploadedAt: toIso(row[2]), exportedAt: toIso(row[3]) || String(row[3] || ''),
+    events: Number(row[4]) || 0, people: Number(row[5]) || 0
+  };
+}
+
+function listCampfire() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CampfireExports');
+  if (!sheet || sheet.getLastRow() < 2) return { exports: [] };
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
+  var list = rows.filter(function(r) { return r[0]; }).map(campfireSummary);
+  list.sort(function(a, b) { return a.uploadedAt < b.uploadedAt ? 1 : -1; });
+  return { exports: list };
+}
+
+function getCampfire(id) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CampfireExports');
+  if (!sheet || sheet.getLastRow() < 2) return { error: 'Export not found' };
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) !== String(id)) continue;
+    var json = rows[i].slice(CAMPFIRE_DATA_COL - 1).join('');
+    return { export: campfireSummary(rows[i]), data: JSON.parse(json) };
+  }
+  return { error: 'Export not found' };
+}
+
+function deleteCampfire(id) {
+  return withLock(function() {
+    var removed = deleteRowsWhere(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CampfireExports'), function(r) {
+      return String(r[0]) === String(id);
+    });
+    return removed ? { success: true } : { error: 'Export not found' };
+  });
 }
 
 function logScan(data) {

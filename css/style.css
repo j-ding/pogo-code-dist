@@ -572,6 +572,162 @@ header h1 {
   padding-left: 18px;
 }
 
+/* Campfire exports */
+.campfire-upload {
+  cursor: pointer;
+}
+
+.campfire-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.campfire-picker select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.85rem;
+}
+
+.campfire-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.campfire-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.campfire-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.campfire-stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.campfire-stat-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.campfire-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.campfire-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.campfire-event-title {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 160px;
+}
+
+.campfire-event-title .code-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.campfire-event-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.campfire-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.campfire-details .code-meta {
+  display: inline-block;
+  min-width: 48px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.campfire-details a {
+  color: var(--accent);
+}
+
+.campfire-attendees h4 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.campfire-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.campfire-name {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-card);
+  font-size: 0.8rem;
+}
+
+.campfire-search {
+  margin-bottom: 10px;
+}
+
+.campfire-history {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.campfire-history li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.campfire-history li > span:first-child {
+  font-weight: 500;
+}
+
+.campfire-history .code-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
 /* Community */
 .community-grid {
   display: grid;

@@ -1,1 +1,3 @@
 config.json
+# Campfire exports contain real trainers' names and IDs; upload them through Settings instead.
+campfire-exports/
