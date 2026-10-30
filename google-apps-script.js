@@ -17,7 +17,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 24;
+var SCRIPT_VERSION = 25;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -537,74 +537,91 @@ function deleteCampfire(id) {
   });
 }
 
+// Only one write can run at a time, so a crowd redeeming at once waits in line for the script lock.
+// Everything that can be read beforehand is, and the lock only covers the writes plus a look at rows
+// added while waiting.
 function logScan(data) {
-  return withLock(function() { return logScanLocked(data); });
+  var sheet = scanLogSheet();
+  var rows = sheet.getDataRange().getValues();
+
+  // The redeem page retries, and can fall back to sendBeacon, so drop repeats.
+  if (data.scanId && hasScanId(rows.slice(Math.max(1, rows.length - 300)).map(function(r) { return [r[13]]; }), data.scanId)) {
+    return jsonOut({ success: true, duplicate: true });
+  }
+
+  var isRepeat = checkRepeat(rows, data.code, data.trainerName);
+  var codeInfo = data.code ? findCodeRow(data.code) : null;
+  var timestamp = data.timestamp || new Date().toISOString();
+  var checkIns = checkInRows();
+  var targets = codeInfo && data.trainerName ? redeemerEventIds(data.trainerName, timestamp, codeInfo.group, checkIns) : [];
+
+  return withLock(function() {
+    var lastRow = sheet.getLastRow();
+    if (data.scanId && lastRow > rows.length) {
+      var added = sheet.getRange(rows.length + 1, 14, lastRow - rows.length, 1).getValues();
+      if (hasScanId(added, data.scanId)) return jsonOut({ success: true, duplicate: true });
+    }
+
+    sheet.appendRow([
+      timestamp,
+      data.code || '',
+      data.trainerName || '',
+      data.device || '',
+      data.os || '',
+      data.browser || '',
+      data.city || '',
+      data.country || '',
+      data.language || '',
+      data.screenResolution || '',
+      data.referrer || '',
+      isRepeat ? 'Yes' : 'No',
+      data.deviceId || '',
+      data.scanId || '',
+      codeInfo ? codeInfo.group : ''
+    ]);
+
+    // Only real codes have side effects, so a forged logScan can't check people in.
+    if (codeInfo && markCodeUsed(codeInfo, data.code)) {
+      addRedeemerToEvents(targets, data.trainerName, timestamp, data.deviceId || '', checkIns.length + 1);
+    }
+    return jsonOut({ success: true, repeat: isRepeat });
+  });
 }
 
-function logScanLocked(data) {
+function hasScanId(rows, scanId) {
+  return rows.some(function(r) { return String(r[0]) === String(scanId); });
+}
+
+function scanLogSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('ScanLog');
-
-  if (!sheet) {
-    sheet = ss.insertSheet('ScanLog');
-    sheet.appendRow([
-      'Timestamp', 'Code', 'Trainer Name', 'Device', 'OS', 'Browser',
-      'City', 'Country', 'Language', 'Screen Resolution', 'Referrer', 'Repeat', 'Device ID'
-    ]);
+  var existing = ss.getSheetByName('ScanLog');
+  if (existing) {
+    var current = existing.getRange(1, 1, 1, existing.getLastColumn()).getValues()[0];
+    if (current.indexOf('Device ID') !== -1 && current.indexOf('Scan ID') !== -1 && current.indexOf('Group') !== -1) return existing;
   }
 
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  if (headers.indexOf('Device ID') === -1) {
-    sheet.getRange(1, 13).setValue('Device ID');
-  }
-  if (headers.indexOf('Scan ID') === -1) {
-    sheet.getRange(1, 14).setValue('Scan ID');
-  }
-  if (headers.indexOf('Group') === -1) {
-    sheet.getRange(1, 15).setValue('Group');
-    backfillScanGroups(sheet);
-  }
-
-  // The redeem page retries over sendBeacon if the confirmed request times out, so drop repeats.
-  if (data.scanId) {
-    var lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      var start = Math.max(2, lastRow - 299);
-      var recentIds = sheet.getRange(start, 14, lastRow - start + 1, 1).getValues();
-      for (var r = 0; r < recentIds.length; r++) {
-        if (String(recentIds[r][0]) === String(data.scanId)) return jsonOut({ success: true, duplicate: true });
-      }
+  return withLock(function() {
+    var sheet = ss.getSheetByName('ScanLog');
+    if (!sheet) {
+      sheet = ss.insertSheet('ScanLog');
+      sheet.appendRow([
+        'Timestamp', 'Code', 'Trainer Name', 'Device', 'OS', 'Browser',
+        'City', 'Country', 'Language', 'Screen Resolution', 'Referrer', 'Repeat', 'Device ID'
+      ]);
     }
-  }
-
-  var isRepeat = checkRepeat(sheet, data.code, data.trainerName);
-  var codeInfo = data.code ? findCodeRow(data.code) : null;
-
-  sheet.appendRow([
-    data.timestamp || new Date().toISOString(),
-    data.code || '',
-    data.trainerName || '',
-    data.device || '',
-    data.os || '',
-    data.browser || '',
-    data.city || '',
-    data.country || '',
-    data.language || '',
-    data.screenResolution || '',
-    data.referrer || '',
-    isRepeat ? 'Yes' : 'No',
-    data.deviceId || '',
-    data.scanId || '',
-    codeInfo ? codeInfo.group : ''
-  ]);
-
-  // Only real codes have side effects, so a forged logScan can't check people in.
-  var knownCode = codeInfo ? deactivateCodeAfterRedeem(data.code) : false;
-  if (knownCode && data.trainerName) {
-    addRedeemerToOpenEvents(data.trainerName, data.timestamp || new Date().toISOString(), data.deviceId || '', codeInfo.group);
-  }
-
-  return jsonOut({ success: true, repeat: isRepeat });
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (headers.indexOf('Device ID') === -1) {
+      sheet.getRange(1, 13).setValue('Device ID');
+    }
+    if (headers.indexOf('Scan ID') === -1) {
+      sheet.getRange(1, 14).setValue('Scan ID');
+    }
+    if (headers.indexOf('Group') === -1) {
+      sheet.getRange(1, 15).setValue('Group');
+      backfillScanGroups(sheet);
+    }
+    return sheet;
+  });
 }
 
 // ---------- Event alerts (OneSignal web push) ----------
@@ -636,6 +653,7 @@ function recordPushOptIn(trainerName) {
   var name = String(trainerName).trim().slice(0, 40);
   var key = trainerKey(name);
   if (!key) return { error: 'Trainer name is required' };
+  if (readPushOptIns()[key]) return { success: true }; // Already recorded, so no need to wait for the lock.
   return withLock(function() {
     var sheet = pushOptInsSheet();
     var rows = sheet.getDataRange().getValues();
@@ -923,28 +941,27 @@ function backfillScanGroups(sheet) {
   sheet.getRange(2, 15, groups.length, 1).setValues(groups);
 }
 
-function deactivateCodeAfterRedeem(code) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('Codes');
+// Caller holds the script lock. The row was looked up before the lock, so make sure it's still that code.
+function markCodeUsed(info, code) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
   if (!sheet) return false;
-
   var target = String(code).trim().toUpperCase();
-  var rows = sheet.getDataRange().getValues();
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]).trim().toUpperCase() === target) {
-      sheet.getRange(i + 1, 5).setValue('No');
-      return true;
-    }
+  var row = info.row;
+  var same = row <= sheet.getLastRow() && String(sheet.getRange(row, 1, 1, 1).getValues()[0][0]).trim().toUpperCase() === target;
+  if (!same) {
+    var moved = findCodeRow(code);
+    if (!moved) return false;
+    row = moved.row;
   }
-  return false;
+  sheet.getRange(row, 5).setValue('No');
+  return true;
 }
 
-function checkRepeat(sheet, code, trainerName) {
+function checkRepeat(rows, code, trainerName) {
   if (!code || !trainerName) return false;
 
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
-    if (data[i][1] === code && data[i][2] === trainerName) {
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][1] === code && rows[i][2] === trainerName) {
       return true;
     }
   }
@@ -1472,7 +1489,7 @@ function withRedeemedCodes(ev, attendees) {
     var ts = new Date(row[0]);
     if (!a || !row[1] || isNaN(ts.getTime())) return;
     var tiedTo = ties[String(row[14] || '').trim()] || '';
-    // Same rule as addRedeemerToOpenEvents: tied codes belong to their event, the rest go by date.
+    // Same rule as redeemerEventIds: tied codes belong to their event, the rest go by date.
     if (tiedTo ? tiedTo !== ev.id : (hasTies || ts < w.since || ts >= w.until)) return;
     var code = String(row[1]).trim().toUpperCase();
     if (a.codes.some(function(c) { return c.code === code; })) return;
@@ -1483,6 +1500,32 @@ function withRedeemedCodes(ev, attendees) {
   return attendees;
 }
 
+// Why this trainer can't be added to this event's check-ins, or null if they can.
+function checkInOutcome(rows, id, key, deviceId, trackDevice) {
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][1]) !== id) continue;
+    if (trainerKey(rows[i][2]) === key) {
+      return { success: true, alreadyCheckedIn: true, viaRedemption: String(rows[i][4]) === 'redeem', existingName: String(rows[i][2]) };
+    }
+  }
+  // Only QR check-ins count toward the one-per-phone limit, so a phone used to redeem a code for
+  // someone else can still check its owner in.
+  for (var j = 0; j < rows.length; j++) {
+    if (String(rows[j][1]) === id && trackDevice && String(rows[j][3]) === deviceId && String(rows[j][4]) !== 'redeem') {
+      return { success: false, deviceUsed: true, existingName: String(rows[j][2]) };
+    }
+  }
+  return null;
+}
+
+// Check-in rows added since seen sheet rows (header included) were read. Caller holds the script lock.
+function checkInRowsSince(sheet, seen) {
+  var last = sheet.getLastRow();
+  if (last < seen) return sheet.getDataRange().getValues().slice(1); // Rows were removed, so check everything.
+  if (last === seen) return [];
+  return sheet.getRange(seen + 1, 1, last - seen, 5).getValues();
+}
+
 function checkIn(id, trainerName, deviceId) {
   trainerName = String(trainerName).replace(/\s+/g, '');
   if (!/^[A-Za-z0-9]+$/.test(trainerName)) {
@@ -1491,47 +1534,40 @@ function checkIn(id, trainerName, deviceId) {
   deviceId = String(deviceId || '');
   var trackDevice = deviceId && deviceId !== 'dev-unknown';
 
+  // Read before taking the lock, so a crowd checking in spends as little time as possible waiting in line.
+  var found = findEvent(id);
+  if (!found) return { success: false, error: 'Event not found' };
+  if (!found.event.open) return { success: false, closed: true };
+
+  var key = trainerKey(trainerName);
+  var rows = checkInRows();
+  var outcome = checkInOutcome(rows, id, key, deviceId, trackDevice);
+  if (outcome) return outcome;
+
   return withLock(function() {
-    var found = findEvent(id);
-    if (!found) return { success: false, error: 'Event not found' };
-    if (!found.event.open) return { success: false, closed: true };
-
-    var key = trainerKey(trainerName);
-    var rows = checkInRows();
-    for (var i = 0; i < rows.length; i++) {
-      if (String(rows[i][1]) !== id) continue;
-      if (trainerKey(rows[i][2]) === key) {
-        return { success: true, alreadyCheckedIn: true, viaRedemption: String(rows[i][4]) === 'redeem', existingName: String(rows[i][2]) };
-      }
-    }
-    // Only QR check-ins count toward the one-per-phone limit, so a phone used to redeem a code for
-    // someone else can still check its owner in.
-    for (var j = 0; j < rows.length; j++) {
-      if (String(rows[j][1]) === id && trackDevice && String(rows[j][3]) === deviceId && String(rows[j][4]) !== 'redeem') {
-        return { success: false, deviceUsed: true, existingName: String(rows[j][2]) };
-      }
-    }
-
-    getCheckInsSheet().appendRow([new Date().toISOString(), id, trainerName, deviceId, 'qr']);
+    var sheet = getCheckInsSheet();
+    // Someone may have checked in while this request waited for the lock.
+    var late = checkInOutcome(checkInRowsSince(sheet, rows.length + 1), id, key, deviceId, trackDevice);
+    if (late) return late;
+    sheet.appendRow([new Date().toISOString(), id, trainerName, deviceId, 'qr']);
     return { success: true, alreadyCheckedIn: false };
   });
 }
 
-// Caller (logScan) already holds the script lock. A code from a group tied to an event checks the trainer
-// into that event (any day, while it's open). Other codes go to open events running that day that
-// don't have groups of their own tied to them.
-function addRedeemerToOpenEvents(trainerName, timestamp, deviceId, group) {
+// The events a redeemed code checks this trainer into. A code from a group tied to an event checks them into
+// that event (any day, while it's open). Other codes go to open events running that day that don't have
+// groups of their own tied to them.
+function redeemerEventIds(trainerName, timestamp, group, rows) {
   var key = trainerKey(trainerName);
   var ts = new Date(timestamp);
-  if (!key || isNaN(ts.getTime())) return;
+  if (!key || isNaN(ts.getTime())) return [];
 
   var ties = groupEventMap();
   var tiedEvent = ties[group || ''] || '';
   var eventsWithTies = {};
   Object.keys(ties).forEach(function(g) { eventsWithTies[ties[g]] = true; });
 
-  var rows = checkInRows();
-  var sheet = null;
+  var ids = [];
   readEvents().forEach(function(r) {
     var ev = r.event;
     if (!ev.open) return;
@@ -1543,9 +1579,20 @@ function addRedeemerToOpenEvents(trainerName, timestamp, deviceId, group) {
       if (ts < w.since || ts >= w.until) return;
     }
     var already = rows.some(function(row) { return String(row[1]) === ev.id && trainerKey(row[2]) === key; });
-    if (already) return;
-    sheet = sheet || getCheckInsSheet();
-    sheet.appendRow([ts.toISOString(), ev.id, String(trainerName).trim(), deviceId, 'redeem']);
+    if (!already) ids.push(ev.id);
+  });
+  return ids;
+}
+
+// Caller (logScan) holds the script lock. seen is how many CheckIns sheet rows existed when ids was worked out.
+function addRedeemerToEvents(ids, trainerName, timestamp, deviceId, seen) {
+  if (!ids.length) return;
+  var key = trainerKey(trainerName);
+  var sheet = getCheckInsSheet();
+  var late = checkInRowsSince(sheet, seen);
+  ids.forEach(function(id) {
+    var already = late.some(function(row) { return String(row[1]) === id && trainerKey(row[2]) === key; });
+    if (!already) sheet.appendRow([new Date(timestamp).toISOString(), id, String(trainerName).trim(), deviceId, 'redeem']);
   });
 }
 

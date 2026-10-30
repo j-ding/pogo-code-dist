@@ -7,6 +7,7 @@ const PogoAlerts = (() => {
   const SDK = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
   let oneSignal = null;
   let scriptUrl = '';
+  const LINKED_KEY = 'pogo_alerts_linked';
 
   const key = name => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const within = (promise, ms) => Promise.race([promise, new Promise(resolve => setTimeout(resolve, ms))]);
@@ -67,21 +68,33 @@ const PogoAlerts = (() => {
     document.getElementById(rowId).classList.remove('hidden');
   }
 
+  function linkedTrainer() {
+    try { return localStorage.getItem(LINKED_KEY) || ''; } catch { return ''; }
+  }
+
   // Call straight from the form's submit handler: browsers only show the permission prompt in response
-  // to a tap, so the prompt has to be requested before anything else is awaited.
+  // to a tap, so the prompt has to be requested before anything else is awaited. It never rejects, and
+  // callers don't wait on it to check someone in, since it can take a while.
   async function applyChoice(checkboxId, trainerName) {
     const box = document.getElementById(checkboxId);
     if (!oneSignal || !box) return;
     try {
+      const wasOptedIn = optedIn();
       if (!box.checked) {
-        if (optedIn()) await oneSignal.User.PushSubscription.optOut();
+        if (wasOptedIn) await oneSignal.User.PushSubscription.optOut();
         return;
       }
-      if (!optedIn()) await within(oneSignal.User.PushSubscription.optIn(), 30000);
+      if (!wasOptedIn) await within(oneSignal.User.PushSubscription.optIn(), 30000);
       if (!optedIn()) return;
-      await within(oneSignal.login(key(trainerName)), 5000);
+      const trainer = key(trainerName);
+      // This phone is already linked to this trainer, so there's nothing to do.
+      if (wasOptedIn && linkedTrainer() === trainer) return;
+      await within(oneSignal.login(trainer), 5000);
       const params = new URLSearchParams({ action: 'pushOptIn', trainerName });
-      await within(fetch(`${scriptUrl}?${params}`), 5000);
+      const res = await within(fetch(`${scriptUrl}?${params}`), 5000);
+      if (res && res.ok) {
+        try { localStorage.setItem(LINKED_KEY, trainer); } catch {}
+      }
     } catch (err) {
       if (typeof reportError === 'function') reportError(err, 'alerts.js');
     }

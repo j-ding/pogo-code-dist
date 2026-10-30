@@ -120,6 +120,9 @@ async function checkCooldown(trainerName, scriptUrl) {
   }
 }
 
+// Set when the form is submitted. Leaving for the store would cut off an alerts opt-in still in progress.
+let alertsDone = Promise.resolve();
+
 function proceedWithRedeem(code, trainerName, redeemUrl) {
   document.getElementById('step-already-redeemed').classList.add('hidden');
   document.getElementById('step-cooldown').classList.add('hidden');
@@ -148,7 +151,7 @@ function proceedWithRedeem(code, trainerName, redeemUrl) {
       scanId: newScanId(),
     };
 
-    sendScanLog(logData).finally(() => {
+    Promise.all([sendScanLog(logData), alertsDone]).finally(() => {
       window.location.href = redeemUrl;
     });
   });
@@ -158,18 +161,22 @@ function newScanId() {
   try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 }
 
-// Wait briefly for a confirmed save; if that fails or is slow, fall back to a beacon (the scan ID dedupes it).
+// Wait for a confirmed save, trying twice since a crowd redeeming at once can leave the server busy. If that
+// doesn't work, fall back to a beacon, which still goes through after the redirect (the scan ID dedupes repeats).
 async function sendScanLog(logData) {
   const scriptUrl = getScriptUrl();
   if (!scriptUrl) return;
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500);
-    const res = await fetch(`${scriptUrl}?${new URLSearchParams(logData)}`, { signal: controller.signal });
-    clearTimeout(timeout);
-    const data = await res.json();
-    if (data.success) return;
-  } catch {}
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`${scriptUrl}?${new URLSearchParams(logData)}`, { signal: controller.signal });
+      const data = await res.json();
+      clearTimeout(timeout);
+      if (data.success) return;
+    } catch {}
+    if (attempt === 1) await new Promise(r => setTimeout(r, 800 + Math.random() * 1200));
+  }
   try { navigator.sendBeacon(scriptUrl, JSON.stringify(logData)); } catch {}
 }
 
@@ -212,8 +219,9 @@ function init() {
 
     rememberTrainerName('remember-name', trainerName);
     setRedeeming(true);
-    // Before any other await, so the browser still treats the permission prompt as part of the tap.
-    await PogoAlerts.applyChoice('alerts-optin', trainerName);
+    // Started before any await, so the browser treats the permission prompt as part of the tap, but not
+    // waited on here, so the redeem checks run at the same time.
+    alertsDone = PogoAlerts.applyChoice('alerts-optin', trainerName);
     const scriptUrl = getScriptUrl();
 
     // Both checks are independent, so run them together instead of waiting for one then the other.

@@ -1,6 +1,6 @@
 // GitHub Pages caches files for 10 minutes, so right after a deploy a stale page can load newer scripts.
 // Keep APP_VERSION in sync with the app-version meta tag and ?v= strings in the HTML files.
-var APP_VERSION = '2.12.0';
+var APP_VERSION = '2.12.1';
 
 (function reloadIfStale() {
   var meta = document.querySelector('meta[name="app-version"]');

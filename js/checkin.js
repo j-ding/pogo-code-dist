@@ -49,9 +49,31 @@ function resetButton() {
   button.textContent = 'Check In';
 }
 
+// The server can wait up to 15s for its turn to write, so give up a little after that instead of hanging.
 async function callScript(params) {
-  const res = await fetch(`${getScriptUrl()}?${new URLSearchParams(params)}`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  try {
+    const res = await fetch(`${getScriptUrl()}?${new URLSearchParams(params)}`, { signal: controller.signal });
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// A crowd checking in at once can leave the server busy, so try again before bothering the trainer. Retrying
+// is safe: a check-in that already went through just comes back as already checked in.
+async function checkInWithRetry(params, button) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const data = await callScript(params);
+      if (!data.busy || attempt === 3) return data;
+    } catch (err) {
+      if (attempt === 3) throw err;
+    }
+    button.textContent = 'Still checking in...';
+    await new Promise(r => setTimeout(r, attempt * 1000 + Math.random() * 1000));
+  }
 }
 
 async function initCheckInPage() {
@@ -93,12 +115,13 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
   const button = document.getElementById('checkin-submit');
   button.disabled = true;
   button.textContent = 'Checking in...';
-  // Before any other await, so the browser still treats the permission prompt as part of the tap.
-  await PogoAlerts.applyChoice('alerts-optin', trainerName);
+  // Started before any await, so the browser treats the permission prompt as part of the tap, but not
+  // waited on, so turning on alerts doesn't slow down the check-in.
+  PogoAlerts.applyChoice('alerts-optin', trainerName);
   document.getElementById('checkin-error').classList.add('hidden');
 
   try {
-    const data = await callScript({ action: 'checkIn', id: eventId, trainerName, deviceId: getDeviceId() });
+    const data = await checkInWithRetry({ action: 'checkIn', id: eventId, trainerName, deviceId: getDeviceId() }, button);
     if (data.busy) {
       showError('Lots of people are checking in right now. Please tap Check In again.');
       resetButton();
