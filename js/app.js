@@ -1187,10 +1187,30 @@ async function renderEventAlertSummary() {
   document.getElementById('event-alert-summary').textContent = !configured ? '· not set up'
     : attendees.length ? `· ${on} of ${attendees.length} attendee${attendees.length === 1 ? '' : 's'} have alerts on` : '';
   document.getElementById('event-alert-note').textContent = configured
-    ? "Sends a phone notification to attendees who turned on alerts when they checked in or redeemed a code. iPhones can only get them if the site was added to the Home Screen, so also post in Campfire's chat."
+    ? "Sends a phone notification to attendees who turned on alerts when they checked in or redeemed a code. iPhones and iPads can't get them, so also post in Campfire's chat."
     : 'Alerts are not set up yet. See "Event alerts" in Settings > Google Apps Script Setup.';
   document.getElementById('event-alert-form').classList.toggle('hidden', !configured);
 }
+
+const DEFAULT_ALERT_MESSAGE = "Please return to the food court. We'll be starting our raffle soon!";
+
+function fillDefaultAlert() {
+  const input = document.getElementById('event-alert-message');
+  if (document.getElementById('event-alert-default').checked) input.value = DEFAULT_ALERT_MESSAGE;
+  else if (input.value === DEFAULT_ALERT_MESSAGE) input.value = '';
+}
+
+document.getElementById('event-alert-default').addEventListener('change', () => {
+  fillDefaultAlert();
+  if (!document.getElementById('event-alert-default').checked) document.getElementById('event-alert-message').focus();
+});
+
+// Typing a custom message turns the checkbox off, so it always says whether the default is what's going out.
+document.getElementById('event-alert-message').addEventListener('input', (e) => {
+  document.getElementById('event-alert-default').checked = e.target.value === DEFAULT_ALERT_MESSAGE;
+});
+
+fillDefaultAlert();
 
 document.getElementById('event-alert-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1205,8 +1225,10 @@ document.getElementById('event-alert-form').addEventListener('submit', async (e)
   button.disabled = true;
   button.textContent = 'Sending...';
   try {
-    const data = await callSheet({ action: 'sendAlert', id: ev.id, message });
-    input.value = '';
+    const site = location.origin + location.pathname.replace(/[^/]*$/, '');
+    const data = await callSheet({ action: 'sendAlert', id: ev.id, message, site });
+    // The default stays filled in, ready to send again; a custom message is cleared.
+    if (!document.getElementById('event-alert-default').checked) input.value = '';
     showToast(`Alert sent to ${data.sentTo} phone${data.sentTo === 1 ? '' : 's'}`);
   } catch (err) {
     showToast("Couldn't send the alert: " + err.message);
@@ -1818,7 +1840,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 23;
+const REQUIRED_SCRIPT_VERSION = 24;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);

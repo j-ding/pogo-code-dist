@@ -1,3 +1,10 @@
 config.json
 # Campfire exports contain real trainers' names and IDs; upload them through Settings instead.
 campfire-exports/
+
+# Full-size logo source; the pages use the smaller img/north-fulton-icon.png.
+north-fulton-pkgo-raids-icon-1024.png
+
+# Local tools and screenshots, not part of the site. The scraper notes list real trainer names.
+campfire scrapper/
+a8618b5b-188b-41d6-aa0e-935007bb6e4c.jpg.jpeg

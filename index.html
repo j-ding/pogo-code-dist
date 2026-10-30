@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.11.0">
+  <meta name="app-version" content="2.12.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.11.0">
+  <link rel="stylesheet" href="css/style.css?v=2.12.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -160,9 +160,13 @@
             <summary>Send an alert <span id="event-alert-summary" class="code-meta"></span></summary>
             <p id="event-alert-note" class="card-note">Sends a phone notification to attendees who turned on alerts when they checked in or redeemed a code.</p>
             <form id="event-alert-form">
+              <label class="rule-check event-alert-default">
+                <input type="checkbox" id="event-alert-default" checked>
+                <span>Use the default message</span>
+              </label>
               <div class="form-group">
                 <label for="event-alert-message">Message</label>
-                <textarea id="event-alert-message" rows="2" maxlength="300" placeholder="Please return to the food court. We'll be starting our raffle soon!" required></textarea>
+                <textarea id="event-alert-message" rows="2" maxlength="300" required></textarea>
               </div>
               <button type="submit" id="event-alert-send" class="btn btn-small btn-primary">Send Alert</button>
             </form>
@@ -475,13 +479,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.11.0</span>
+      <span>v2.12.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.11.0"></script>
-  <script src="js/error-logger.js?v=2.11.0"></script>
-  <script src="js/auth.js?v=2.11.0"></script>
-  <script src="js/app.js?v=2.11.0"></script>
+  <script src="js/site-config.js?v=2.12.0"></script>
+  <script src="js/error-logger.js?v=2.12.0"></script>
+  <script src="js/auth.js?v=2.12.0"></script>
+  <script src="js/app.js?v=2.12.0"></script>
 </body>
 </html>

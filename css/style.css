@@ -1579,6 +1579,28 @@ header h1 {
   padding: 16px 0;
 }
 
+/* App-icon sized logo that grows with the screen: 72px on phones up to 144px on large tablets. */
+.brand-icon {
+  display: block;
+  width: clamp(72px, 18vmin, 144px);
+  height: auto;
+  margin: 0 auto 12px;
+  border-radius: 22%;
+}
+
+.alert-message {
+  font-size: 1.2rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.alert-time {
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
 .code-display {
   text-align: center;
   margin-top: 16px;
@@ -1729,6 +1751,11 @@ header h1 {
 
 .event-alert .card-note {
   margin: 10px 0;
+}
+
+.event-alert-default {
+  margin-bottom: 10px;
+  font-size: 0.85rem;
 }
 
 .event-alert textarea {

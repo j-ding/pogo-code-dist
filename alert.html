@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="app-version" content="2.12.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Event Alert - North Fulton PKGO Raids</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css?v=2.12.0">
+</head>
+<body>
+  <div class="container redeem-container">
+    <header>
+      <img src="img/north-fulton-icon.png" class="brand-icon" width="320" height="320" alt="">
+      <h1>North Fulton PKGO Raids</h1>
+      <p class="subtitle">Event Alert</p>
+    </header>
+
+    <section id="step-loading" class="card">
+      <div class="spinner"></div>
+    </section>
+
+    <section id="step-unavailable" class="card hidden">
+      <h2 id="unavailable-title">Alert Not Found</h2>
+      <p id="unavailable-message">This alert isn't available. Check with an organizer at the event.</p>
+    </section>
+
+    <section id="step-alert" class="card hidden">
+      <h2 id="alert-event"></h2>
+      <p id="alert-message" class="alert-message"></p>
+      <p id="alert-time" class="alert-time"></p>
+    </section>
+  </div>
+
+  <script src="js/site-config.js?v=2.12.0"></script>
+  <script src="js/error-logger.js?v=2.12.0"></script>
+  <script src="js/alert-page.js?v=2.12.0"></script>
+</body>
+</html>

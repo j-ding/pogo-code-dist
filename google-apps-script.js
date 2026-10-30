@@ -17,10 +17,10 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 23;
+var SCRIPT_VERSION = 24;
 
 // Everything else requires an admin token from login().
-var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn'];
+var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
 
 function jsonOut(obj) {
   return ContentService
@@ -144,7 +144,11 @@ function handleGet(e) {
   }
 
   if (action === 'sendAlert') {
-    return jsonOut(sendEventAlert(p.id || '', p.message || ''));
+    return jsonOut(sendEventAlert(p.id || '', p.message || '', p.site || ''));
+  }
+
+  if (action === 'getAlert') {
+    return jsonOut({ alert: getAlert(p.id || '') });
   }
 
   if (action === 'getCodeStatus') {
@@ -608,7 +612,7 @@ function logScanLocked(data) {
 // so an alert for an event goes to that event's attendees who turned alerts on.
 // PushOptIns tab: Trainer Key | Trainer Name | Opted In At. It's how the dashboard knows how many
 // attendees an alert can reach (someone may since have turned notifications off on their phone).
-// Alerts tab: Sent At | Event ID | Event | Message | Attendees | Alerts On | Result
+// Alerts tab: Sent At | Event ID | Event | Message | Attendees | Alerts On | Result | Alert ID
 
 function pushOptInsSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -647,7 +651,39 @@ function recordPushOptIn(trainerName) {
   });
 }
 
-function sendEventAlert(eventId, message) {
+function alertsSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Alerts');
+  if (!sheet) {
+    sheet = ss.insertSheet('Alerts');
+    sheet.appendRow(['Sent At', 'Event ID', 'Event', 'Message', 'Attendees', 'Alerts On', 'Result', 'Alert ID']);
+  } else if (sheet.getLastColumn() < 8) {
+    sheet.getRange(1, 8).setValue('Alert ID');
+  }
+  return sheet;
+}
+
+// Public, for the page a tapped notification opens. Alerts that failed to send aren't shown.
+function getAlert(id) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Alerts');
+  if (!sheet || !id) return null;
+  var rows = sheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][7]) !== String(id)) continue;
+    if (String(rows[i][6]).indexOf('Sen') !== 0) return null;
+    return { eventName: String(rows[i][2]), message: String(rows[i][3]), sentAt: toIso(rows[i][0]) };
+  }
+  return null;
+}
+
+// Run once from the editor to approve the permission alerts need. It only contacts OneSignal; nothing is sent.
+function authorizeAlerts() {
+  var res = UrlFetchApp.fetch('https://api.onesignal.com/', { muteHttpExceptions: true });
+  Logger.log('Alerts can reach OneSignal (HTTP ' + res.getResponseCode() + ').');
+}
+
+// site is the dashboard's own address, which is where the notification's logo and landing page live.
+function sendEventAlert(eventId, message, site) {
   var appId = scriptProperty('ONESIGNAL_APP_ID');
   var apiKey = scriptProperty('ONESIGNAL_API_KEY');
   if (!appId || !apiKey) {
@@ -667,17 +703,31 @@ function sendEventAlert(eventId, message) {
     return { error: 'No one checked in to this event (' + attendees.length + ' so far) has alerts turned on.' };
   }
 
+  // Logged before sending, so the landing page works for anyone who taps the notification right away.
+  var alertId = Utilities.getUuid().split('-')[0];
+  var log = alertsSheet();
+  log.appendRow([new Date().toISOString(), eventId, found.event.name, message, attendees.length, reachable.length, 'Sending', alertId]);
+
+  var notification = {
+    app_id: appId,
+    target_channel: 'push',
+    include_aliases: { external_id: reachable },
+    headings: { en: found.event.name },
+    contents: { en: message }
+  };
+  // OneSignal needs public https addresses for both of these.
+  if (/^https:\/\//.test(site)) {
+    var base = String(site).replace(/\/*$/, '/');
+    notification.url = base + 'alert.html?id=' + alertId;
+    notification.chrome_web_icon = base + 'img/north-fulton-icon.png';
+    notification.firefox_icon = base + 'img/north-fulton-icon.png';
+  }
+
   var res = UrlFetchApp.fetch('https://api.onesignal.com/notifications?c=push', {
     method: 'post',
     contentType: 'application/json',
     headers: { Authorization: 'Key ' + apiKey },
-    payload: JSON.stringify({
-      app_id: appId,
-      target_channel: 'push',
-      include_aliases: { external_id: reachable },
-      headings: { en: found.event.name },
-      contents: { en: message }
-    }),
+    payload: JSON.stringify(notification),
     muteHttpExceptions: true
   });
   var body = {};
@@ -691,12 +741,13 @@ function sendEventAlert(eventId, message) {
       : 'OneSignal: ' + (errors || 'HTTP ' + res.getResponseCode());
   }
 
-  var log = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Alerts');
-  if (!log) {
-    log = SpreadsheetApp.getActiveSpreadsheet().insertSheet('Alerts');
-    log.appendRow(['Sent At', 'Event ID', 'Event', 'Message', 'Attendees', 'Alerts On', 'Result']);
+  var logged = log.getDataRange().getValues();
+  for (var i = logged.length - 1; i >= 1; i--) {
+    if (String(logged[i][7]) === alertId) {
+      log.getRange(i + 1, 7).setValue(sent ? 'Sent ' + body.id : 'Failed: ' + problem);
+      break;
+    }
   }
-  log.appendRow([new Date().toISOString(), eventId, found.event.name, message, attendees.length, reachable.length, sent ? 'Sent ' + body.id : problem]);
 
   return sent ? { success: true, sentTo: reachable.length, attendees: attendees.length } : { error: problem };
 }
