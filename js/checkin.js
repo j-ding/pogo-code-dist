@@ -61,14 +61,34 @@ async function callScript(params) {
   }
 }
 
+// Add &timing=1 to a check-in link to see on screen where the time goes after tapping Check In.
+const timingLog = new URLSearchParams(window.location.search).has('timing') ? [] : null;
+let tappedAt = 0;
+
+function markTiming(label) {
+  if (!timingLog) return;
+  timingLog.push(`${((performance.now() - tappedAt) / 1000).toFixed(1)}s  ${label}`);
+  let box = document.getElementById('timing-log');
+  if (!box) {
+    box = document.createElement('pre');
+    box.id = 'timing-log';
+    box.className = 'timing-log';
+    document.querySelector('.redeem-container').appendChild(box);
+  }
+  box.textContent = timingLog.join('\n');
+}
+
 // A crowd checking in at once can leave the server busy, so try again before bothering the trainer. Retrying
 // is safe: a check-in that already went through just comes back as already checked in.
 async function checkInWithRetry(params, button) {
   for (let attempt = 1; ; attempt++) {
+    markTiming(`request ${attempt} sent`);
     try {
       const data = await callScript(params);
+      markTiming(`request ${attempt} answered${data.busy ? ' (busy)' : ''}`);
       if (!data.busy || attempt === 3) return data;
     } catch (err) {
+      markTiming(`request ${attempt} failed: ${err.message}`);
       if (attempt === 3) throw err;
     }
     button.textContent = 'Still checking in...';
@@ -117,7 +137,9 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
   button.textContent = 'Checking in...';
   // Started before any await, so the browser treats the permission prompt as part of the tap, but not
   // waited on, so turning on alerts doesn't slow down the check-in.
-  PogoAlerts.applyChoice('alerts-optin', trainerName);
+  tappedAt = performance.now();
+  markTiming(`tapped, alerts box ${document.getElementById('alerts-optin').checked ? 'ticked' : 'not ticked'}`);
+  PogoAlerts.applyChoice('alerts-optin', trainerName).then(() => markTiming('alerts finished'));
   document.getElementById('checkin-error').classList.add('hidden');
 
   try {
@@ -152,6 +174,7 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
 
     document.getElementById('joined-message').textContent = `${trainerName} is checked in to ${eventName}. Have fun!`;
     showStep('step-joined');
+    markTiming('success screen shown');
   } catch (err) {
     showError("Couldn't check in. Check your connection and try again.");
     resetButton();

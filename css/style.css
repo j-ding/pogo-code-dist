@@ -1588,6 +1588,13 @@ header h1 {
   border-radius: 22%;
 }
 
+.timing-log {
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+
 .alert-message {
   font-size: 1.2rem;
   line-height: 1.5;
