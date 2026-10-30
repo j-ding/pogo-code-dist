@@ -93,6 +93,8 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
   const button = document.getElementById('checkin-submit');
   button.disabled = true;
   button.textContent = 'Checking in...';
+  // Before any other await, so the browser still treats the permission prompt as part of the tap.
+  await PogoAlerts.applyChoice('alerts-optin', trainerName);
   document.getElementById('checkin-error').classList.add('hidden');
 
   try {
@@ -136,3 +138,4 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
 
 setupRememberedName('checkin-trainer', 'remember-name');
 initCheckInPage();
+PogoAlerts.start(getScriptUrl(), 'alerts-row', 'alerts-optin');

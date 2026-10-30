@@ -184,6 +184,7 @@ function init() {
 
   const redeemUrl = POGO_REDEEM_BASE + encodeURIComponent(code);
   setupRememberedName('trainer-name', 'remember-name');
+  PogoAlerts.start(getScriptUrl(), 'alerts-row', 'alerts-optin');
   document.getElementById('display-code').textContent = code;
   document.getElementById('manual-link').href = redeemUrl;
 
@@ -211,6 +212,8 @@ function init() {
 
     rememberTrainerName('remember-name', trainerName);
     setRedeeming(true);
+    // Before any other await, so the browser still treats the permission prompt as part of the tap.
+    await PogoAlerts.applyChoice('alerts-optin', trainerName);
     const scriptUrl = getScriptUrl();
 
     // Both checks are independent, so run them together instead of waiting for one then the other.

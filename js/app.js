@@ -1148,6 +1148,7 @@ function renderEventAttendees() {
     list.innerHTML = '<p class="empty-state">No one has checked in yet.</p>';
     return;
   }
+  renderEventAlertSummary();
   const knownCodes = new Map(getCodes().map(c => [c.code, c]));
   list.innerHTML = attendees.map(a => `
     <div class="lottery-entrant attendee-row" data-name="${escapeHtml(a.trainerName)}">
@@ -1155,6 +1156,7 @@ function renderEventAttendees() {
       <span class="lottery-badges">
         ${a.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : ''}
         ${a.checkedIn ? '<span class="badge badge-new">Checked in</span>' : ''}
+        ${a.alertsOn ? '<span class="badge badge-event" title="Turned on event alerts on their phone">Alerts on</span>' : ''}
       </span>
       <span class="code-meta">${new Date(a.firstSeen).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
       <span class="lottery-entrant-actions">
@@ -1164,6 +1166,55 @@ function renderEventAttendees() {
     </div>
   `).join('');
 }
+
+// Event alerts: whether OneSignal is set up (the Apps Script only shares the public app id).
+let alertsConfigured = null;
+
+async function loadAlertsConfig() {
+  if (alertsConfigured !== null) return alertsConfigured;
+  try {
+    alertsConfigured = !!(await callSheet({ action: 'pushConfig' })).appId;
+  } catch {
+    alertsConfigured = false;
+  }
+  return alertsConfigured;
+}
+
+async function renderEventAlertSummary() {
+  const configured = await loadAlertsConfig();
+  const attendees = eventState.attendees;
+  const on = attendees.filter(a => a.alertsOn).length;
+  document.getElementById('event-alert-summary').textContent = !configured ? '· not set up'
+    : attendees.length ? `· ${on} of ${attendees.length} attendee${attendees.length === 1 ? '' : 's'} have alerts on` : '';
+  document.getElementById('event-alert-note').textContent = configured
+    ? "Sends a phone notification to attendees who turned on alerts when they checked in or redeemed a code. iPhones can only get them if the site was added to the Home Screen, so also post in Campfire's chat."
+    : 'Alerts are not set up yet. See "Event alerts" in Settings > Google Apps Script Setup.';
+  document.getElementById('event-alert-form').classList.toggle('hidden', !configured);
+}
+
+document.getElementById('event-alert-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const ev = selectedEvent();
+  const input = document.getElementById('event-alert-message');
+  const message = input.value.trim();
+  if (!ev || !message) return;
+  const on = eventState.attendees.filter(a => a.alertsOn).length;
+  if (!confirm(`Send this alert to the ${on} attendee${on === 1 ? '' : 's'} of "${ev.name}" who have alerts on?\n\n${message}`)) return;
+
+  const button = document.getElementById('event-alert-send');
+  button.disabled = true;
+  button.textContent = 'Sending...';
+  try {
+    const data = await callSheet({ action: 'sendAlert', id: ev.id, message });
+    input.value = '';
+    showToast(`Alert sent to ${data.sentTo} phone${data.sentTo === 1 ? '' : 's'}`);
+  } catch (err) {
+    showToast("Couldn't send the alert: " + err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Send Alert';
+  }
+});
 
 function redeemedCodeChip(scan, entry) {
   const time = new Date(scan.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -1767,7 +1818,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 22;
+const REQUIRED_SCRIPT_VERSION = 23;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);

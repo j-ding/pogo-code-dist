@@ -10,15 +10,17 @@
  *  5. Project Settings (gear icon) > Script properties > add ADMIN_USERNAME and ADMIN_PASSWORD.
  *     These are the dashboard login and never leave Google.
  *  6. Optional backups: pick setupWeeklyBackup in the function dropdown and click Run once.
+ *  7. Optional event alerts (free OneSignal web push): add ONESIGNAL_APP_ID and ONESIGNAL_API_KEY
+ *     to Script properties. The API key stays here; only the app id is sent to the pages.
  *
  * Updating: paste the new code, then Deploy > Manage deployments > edit > Version: New version > Deploy.
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 22;
+var SCRIPT_VERSION = 23;
 
 // Everything else requires an admin token from login().
-var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan'];
+var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn'];
 
 function jsonOut(obj) {
   return ContentService
@@ -131,6 +133,18 @@ function handleGet(e) {
 
   if (action === 'logScan') {
     return logScan(p);
+  }
+
+  if (action === 'pushConfig') {
+    return jsonOut({ appId: scriptProperty('ONESIGNAL_APP_ID') || '' });
+  }
+
+  if (action === 'pushOptIn') {
+    return jsonOut(recordPushOptIn(p.trainerName || ''));
+  }
+
+  if (action === 'sendAlert') {
+    return jsonOut(sendEventAlert(p.id || '', p.message || ''));
   }
 
   if (action === 'getCodeStatus') {
@@ -587,6 +601,104 @@ function logScanLocked(data) {
   }
 
   return jsonOut({ success: true, repeat: isRepeat });
+}
+
+// ---------- Event alerts (OneSignal web push) ----------
+// Trainers who allow alerts on the redeem or check-in page are linked to OneSignal by their trainerKey,
+// so an alert for an event goes to that event's attendees who turned alerts on.
+// PushOptIns tab: Trainer Key | Trainer Name | Opted In At. It's how the dashboard knows how many
+// attendees an alert can reach (someone may since have turned notifications off on their phone).
+// Alerts tab: Sent At | Event ID | Event | Message | Attendees | Alerts On | Result
+
+function pushOptInsSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('PushOptIns');
+  if (!sheet) {
+    sheet = ss.insertSheet('PushOptIns');
+    sheet.appendRow(['Trainer Key', 'Trainer Name', 'Opted In At']);
+  }
+  return sheet;
+}
+
+function readPushOptIns() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('PushOptIns');
+  var keys = {};
+  if (!sheet) return keys;
+  sheet.getDataRange().getValues().slice(1).forEach(function(r) { if (r[0]) keys[String(r[0])] = true; });
+  return keys;
+}
+
+function recordPushOptIn(trainerName) {
+  var name = String(trainerName).trim().slice(0, 40);
+  var key = trainerKey(name);
+  if (!key) return { error: 'Trainer name is required' };
+  return withLock(function() {
+    var sheet = pushOptInsSheet();
+    var rows = sheet.getDataRange().getValues();
+    var now = new Date().toISOString();
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][0]) === key) {
+        sheet.getRange(i + 1, 2, 1, 2).setValues([[name, now]]);
+        return { success: true };
+      }
+    }
+    sheet.appendRow([key, name, now]);
+    return { success: true };
+  });
+}
+
+function sendEventAlert(eventId, message) {
+  var appId = scriptProperty('ONESIGNAL_APP_ID');
+  var apiKey = scriptProperty('ONESIGNAL_API_KEY');
+  if (!appId || !apiKey) {
+    return { error: 'Alerts aren\'t set up. Add ONESIGNAL_APP_ID and ONESIGNAL_API_KEY in Apps Script Script properties.' };
+  }
+  message = String(message).trim().slice(0, 300);
+  if (!message) return { error: 'Write a message first' };
+  var found = findEvent(eventId);
+  if (!found) return { error: 'Event not found' };
+
+  var keys = {};
+  eventAttendees(eventId).forEach(function(a) { keys[trainerKey(a.trainerName)] = true; });
+  var attendees = Object.keys(keys);
+  var optedIn = readPushOptIns();
+  var reachable = attendees.filter(function(k) { return optedIn[k]; });
+  if (!reachable.length) {
+    return { error: 'No one checked in to this event (' + attendees.length + ' so far) has alerts turned on.' };
+  }
+
+  var res = UrlFetchApp.fetch('https://api.onesignal.com/notifications?c=push', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Key ' + apiKey },
+    payload: JSON.stringify({
+      app_id: appId,
+      target_channel: 'push',
+      include_aliases: { external_id: reachable },
+      headings: { en: found.event.name },
+      contents: { en: message }
+    }),
+    muteHttpExceptions: true
+  });
+  var body = {};
+  try { body = JSON.parse(res.getContentText()) || {}; } catch (err) {}
+  var sent = res.getResponseCode() === 200 && !!body.id;
+  var problem = '';
+  if (!sent) {
+    var errors = Array.isArray(body.errors) ? body.errors.join('; ') : (body.errors ? JSON.stringify(body.errors) : '');
+    problem = /not subscribed/i.test(errors)
+      ? 'None of the attendees with alerts on can be reached anymore (they may have turned notifications off).'
+      : 'OneSignal: ' + (errors || 'HTTP ' + res.getResponseCode());
+  }
+
+  var log = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Alerts');
+  if (!log) {
+    log = SpreadsheetApp.getActiveSpreadsheet().insertSheet('Alerts');
+    log.appendRow(['Sent At', 'Event ID', 'Event', 'Message', 'Attendees', 'Alerts On', 'Result']);
+  }
+  log.appendRow([new Date().toISOString(), eventId, found.event.name, message, attendees.length, reachable.length, sent ? 'Sent ' + body.id : problem]);
+
+  return sent ? { success: true, sentTo: reachable.length, attendees: attendees.length } : { error: problem };
 }
 
 // ---------- Code groups ----------
@@ -1294,7 +1406,7 @@ function removeAttendee(id, trainerName) {
 }
 
 // Adds the codes each attendee redeemed during the event (from the ScanLog), so an admin can reactivate
-// one if the trainer's redemption didn't actually go through.
+// one if the trainer's redemption didn't actually go through, and whether they have event alerts on.
 function withRedeemedCodes(ev, attendees) {
   var byKey = {};
   attendees.forEach(function(a) { a.codes = []; byKey[trainerKey(a.trainerName)] = a; });
@@ -1315,6 +1427,8 @@ function withRedeemedCodes(ev, attendees) {
     if (a.codes.some(function(c) { return c.code === code; })) return;
     a.codes.push({ code: code, timestamp: ts.toISOString() });
   });
+  var optedIn = readPushOptIns();
+  attendees.forEach(function(a) { a.alertsOn = !!optedIn[trainerKey(a.trainerName)]; });
   return attendees;
 }
 

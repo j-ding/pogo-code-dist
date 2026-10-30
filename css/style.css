@@ -1713,6 +1713,42 @@ header h1 {
   resize: vertical;
 }
 
+.event-alert {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.event-alert summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.event-alert .card-note {
+  margin: 10px 0;
+}
+
+.event-alert textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.95rem;
+  resize: vertical;
+}
+
+.setup-subhead {
+  font-size: 0.95rem;
+  margin: 16px 0 4px;
+}
+
 /* Setup Steps */
 .setup-steps {
   padding-left: 20px;
