@@ -1590,8 +1590,17 @@ header h1 {
 
 .timing-log {
   margin-top: 12px;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.timing-log summary {
+  cursor: pointer;
+}
+
+.timing-log pre {
+  margin-top: 6px;
+  font-family: inherit;
   white-space: pre-wrap;
 }
 

@@ -61,7 +61,7 @@ async function callScript(params) {
   }
 }
 
-// Add &timing=1 to a check-in link to see on screen where the time goes after tapping Check In.
+// Add &timing=1 to a check-in link to get a collapsed Log showing where the time goes after tapping Check In.
 const timingLog = new URLSearchParams(window.location.search).has('timing') ? [] : null;
 let tappedAt = 0;
 
@@ -70,12 +70,13 @@ function markTiming(label) {
   timingLog.push(`${((performance.now() - tappedAt) / 1000).toFixed(1)}s  ${label}`);
   let box = document.getElementById('timing-log');
   if (!box) {
-    box = document.createElement('pre');
+    box = document.createElement('details');
     box.id = 'timing-log';
     box.className = 'timing-log';
+    box.innerHTML = '<summary>Log</summary><pre></pre>';
     document.querySelector('.redeem-container').appendChild(box);
   }
-  box.textContent = timingLog.join('\n');
+  box.querySelector('pre').textContent = timingLog.join('\n');
 }
 
 // A crowd checking in at once can leave the server busy, so try again before bothering the trainer. Retrying
