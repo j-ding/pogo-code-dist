@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.12.4">
+  <meta name="app-version" content="2.13.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.12.4">
+  <link rel="stylesheet" href="css/style.css?v=2.13.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -277,9 +277,22 @@
                   <option value="10">10</option>
                 </select>
               </label>
+              <label class="rule-check winner-count">
+                <input type="checkbox" id="lottery-wheel-on">
+                <span class="inline-label">Spin the wheel</span>
+              </label>
               <button id="lottery-draw" class="btn btn-small btn-primary">Choose 1 Winner</button>
               <button id="lottery-draw-all" class="btn btn-small btn-primary hidden"></button>
             </div>
+          </div>
+          <div id="lottery-wheel" class="lottery-wheel hidden">
+            <div id="lottery-wheel-stage" class="lottery-wheel-stage">
+              <canvas id="lottery-wheel-canvas" class="lottery-wheel-canvas" role="img" aria-label="Raffle wheel of the trainers who can be drawn"></canvas>
+              <div class="lottery-wheel-pointer"></div>
+              <img src="img/north-fulton-icon.png" class="lottery-wheel-hub" alt="">
+            </div>
+            <p id="lottery-wheel-readout" class="lottery-wheel-readout"></p>
+            <div id="lottery-wheel-winners" class="lottery-wheel-winners hidden"></div>
           </div>
           <div class="lottery-sort">
             <label for="lottery-sort" class="inline-label">Sort</label>
@@ -480,13 +493,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.12.4</span>
+      <span>v2.13.0</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.12.4"></script>
-  <script src="js/error-logger.js?v=2.12.4"></script>
-  <script src="js/auth.js?v=2.12.4"></script>
-  <script src="js/app.js?v=2.12.4"></script>
+  <script src="js/site-config.js?v=2.13.0"></script>
+  <script src="js/error-logger.js?v=2.13.0"></script>
+  <script src="js/auth.js?v=2.13.0"></script>
+  <script src="js/app.js?v=2.13.0"></script>
 </body>
 </html>

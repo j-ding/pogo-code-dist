@@ -566,6 +566,7 @@ function renderLotteryEntrants() {
   sortSelect.querySelector('option[value="checkins"]').hidden = !hasCheckIns;
   if (entrantSort === 'checkins' && !hasCheckIns) entrantSort = 'name';
   sortSelect.value = entrantSort;
+  renderWheel(lottery);
 
   if (entrants.length === 0) {
     list.innerHTML = '<p class="empty-state">No entrants yet.</p>';
@@ -817,7 +818,7 @@ document.getElementById('lottery-winner-count').addEventListener('change', async
 });
 
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
+  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-wheel-on', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
   document.querySelectorAll('#lottery-rule-lotteries input').forEach(i => { i.disabled = disabled; });
@@ -845,7 +846,8 @@ async function drawLotteryWinners(count) {
       const name = await drawOneWinner(lottery);
       if (!name) break;
       picked.push(name);
-      if (i < count - 1) await new Promise(r => setTimeout(r, 900));
+      // The wheel gets a longer pause so everyone can see who won before it spins again.
+      if (i < count - 1) await new Promise(r => setTimeout(r, wheelIsOn() ? 3000 : 900));
     }
     if (picked.length > 1) showToast(`Winners: ${picked.join(', ')}`);
   } finally {
@@ -856,9 +858,203 @@ async function drawLotteryWinners(count) {
   }
 }
 
+function drawablePool(lottery) {
+  return lotteryState.entrants.filter(e => !e.skipped && !e.ineligible && !isWinner(lottery, e.trainerName));
+}
+
+// The raffle wheel. Its slices are the people who can be drawn right now, in list order and sized by their
+// entries, and it's rebuilt whenever the list is, so removing or skipping someone takes them off the wheel.
+const WHEEL_KEY = 'pogo_lottery_wheel';
+const WHEEL_COLORS = ['#d63a3f', '#2f6fde', '#c9770a', '#15803d', '#7c4ddb', '#0f8a80'];
+const wheel = { slices: [], rotation: 0, spinning: false, held: null };
+const wheelToggle = document.getElementById('lottery-wheel-on');
+try { wheelToggle.checked = localStorage.getItem(WHEEL_KEY) === 'on'; } catch {}
+
+function wheelIsOn() {
+  return wheelToggle.checked;
+}
+
+wheelToggle.addEventListener('change', () => {
+  try { localStorage.setItem(WHEEL_KEY, wheelToggle.checked ? 'on' : 'off'); } catch {}
+  renderWheel(selectedLottery());
+});
+
+function buildWheelSlices(pool) {
+  const tickets = pool.reduce((n, e) => n + (e.entries || 1), 0);
+  let at = 0;
+  return sortedEntrants(pool).map((e, i) => {
+    const entries = e.entries || 1;
+    const start = at;
+    at += entries / tickets * 360;
+    // The last slice sits next to the first, so don't let them share a color.
+    const wraps = i > 0 && i === pool.length - 1 && i % WHEEL_COLORS.length === 0;
+    return { key: trainerKey(e.trainerName), name: e.trainerName, entries, start, end: at, color: WHEEL_COLORS[wraps ? 1 : i % WHEEL_COLORS.length] };
+  });
+}
+
+function paintWheel() {
+  const canvas = document.getElementById('lottery-wheel-canvas');
+  const size = canvas.clientWidth;
+  if (!size) return;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = canvas.height = Math.round(size * ratio);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(ratio, ratio);
+  const center = size / 2;
+  const radius = center - 4;
+  const heldKey = wheel.held && wheel.held.key;
+
+  wheel.slices.forEach(slice => {
+    // Slice angles count clockwise from the top, where the pointer is.
+    const from = (slice.start - 90) * Math.PI / 180;
+    const to = (slice.end - 90) * Math.PI / 180;
+    ctx.globalAlpha = heldKey && slice.key !== heldKey ? 0.3 : 1;
+    ctx.fillStyle = slice.color;
+    ctx.beginPath();
+    ctx.moveTo(center, center);
+    ctx.arc(center, center, radius, from, to);
+    ctx.closePath();
+    ctx.fill();
+    if (wheel.slices.length > 1) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  });
+
+  // Names go on after every slice is painted, or each slice would cover the end of its neighbor's name.
+  wheel.slices.forEach(slice => {
+    const from = (slice.start - 90) * Math.PI / 180;
+    const to = (slice.end - 90) * Math.PI / 180;
+    ctx.globalAlpha = heldKey && slice.key !== heldKey ? 0.3 : 1;
+
+    // Fit the name to its slice. Slices too thin to read go unlabeled; the readout still names them.
+    const room = radius * 0.8 - 14;
+    let px = Math.min(radius * 0.075, (to - from) * radius * 0.6);
+    ctx.font = `600 ${px}px Inter, sans-serif`;
+    const width = ctx.measureText(slice.name).width;
+    if (width > room) px *= room / width;
+    if (px < 7) return;
+    ctx.font = `600 ${px}px Inter, sans-serif`;
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.rotate((from + to) / 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(slice.name, radius - 10, 0);
+    ctx.restore();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function setWheelRotation(degrees) {
+  wheel.rotation = degrees;
+  document.getElementById('lottery-wheel-canvas').style.transform = `rotate(${degrees}deg)`;
+}
+
+function setWheelReadout(text, state) {
+  const readout = document.getElementById('lottery-wheel-readout');
+  readout.textContent = text;
+  readout.className = `lottery-wheel-readout${state ? ` is-${state}` : ''}`;
+}
+
+// After a spin the wheel stays as it landed, winner lit up, until the list changes in some other way than
+// that winner leaving the pool. Otherwise their slice would vanish and the pointer would be on someone else.
+function wheelHoldStands(lottery, slices) {
+  const held = wheel.held;
+  if (!held || held.lotteryId !== lottery.id || !isWinner(lottery, held.name)) return false;
+  const shape = list => list.map(s => `${s.key}:${s.entries}`).join();
+  return shape(wheel.slices.filter(s => s.key !== held.key)) === shape(slices);
+}
+
+// With more than one winner to draw, the wheel keeps a running list of who has won so far.
+function renderWheelWinners(lottery) {
+  const box = document.getElementById('lottery-wheel-winners');
+  const show = winnerCountOf(lottery) > 1 && lottery.winners.length > 0;
+  box.classList.toggle('hidden', !show);
+  box.innerHTML = show ? `<h4>Winners</h4><ol>${lottery.winners.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ol>` : '';
+}
+
+function renderWheel(lottery) {
+  const on = wheelIsOn() && !!lottery;
+  document.getElementById('lottery-wheel').classList.toggle('hidden', !on);
+  if (!on || wheel.spinning) return;
+  renderWheelWinners(lottery);
+
+  const pool = drawablePool(lottery);
+  const slices = buildWheelSlices(pool);
+  if (!wheelHoldStands(lottery, slices)) {
+    wheel.held = null;
+    wheel.slices = slices;
+  }
+  document.getElementById('lottery-wheel-stage').classList.toggle('hidden', wheel.slices.length === 0);
+  paintWheel();
+
+  if (wheel.held) {
+    setWheelReadout(`Winner: ${wheel.held.name}`, 'winner');
+  } else if (pool.length) {
+    const tickets = pool.reduce((n, e) => n + (e.entries || 1), 0);
+    setWheelReadout(`${plural(pool.length, 'trainer')} on the wheel${tickets > pool.length ? ` · ${tickets} entries` : ''}`, 'idle');
+  } else {
+    setWheelReadout(lotteryState.entrants.length ? 'No one left to draw' : 'No entrants yet', 'idle');
+  }
+}
+
+// The canvas has no size while its tab is hidden, and its size changes when a phone is turned.
+new ResizeObserver(paintWheel).observe(document.getElementById('lottery-wheel-canvas'));
+
+function wheelSliceAtPointer() {
+  const angle = ((-wheel.rotation % 360) + 360) % 360;
+  return wheel.slices.find(s => angle < s.end) || wheel.slices[wheel.slices.length - 1];
+}
+
+// Spins until the pointer rests inside the winner's slice. The winner is already chosen by then, so where in
+// the slice it stops is only for show.
+async function spinWheelTo(lottery, pool, winner) {
+  // A landed wheel still shows the last winner, so take them off in plain view before spinning again.
+  const ejecting = !!wheel.held;
+  wheel.held = null;
+  wheel.slices = buildWheelSlices(pool);
+  wheel.spinning = true;
+  paintWheel();
+  document.getElementById('lottery-wheel').scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (ejecting) {
+    setWheelReadout(`${plural(pool.length, 'trainer')} left on the wheel`, 'idle');
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  const slice = wheel.slices.find(s => s.key === trainerKey(winner.trainerName));
+  const sweep = slice.end - slice.start;
+  const target = slice.start + sweep * (0.1 + 0.8 * randomIndex(1000) / 1000);
+  const from = wheel.rotation;
+  const turns = pool.length > 1 ? 6 + randomIndex(3) : 0;
+  const to = from + turns * 360 + (((-target - from) % 360) + 360) % 360;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const duration = pool.length > 1 && !reduceMotion ? 9000 : 0;
+
+  await new Promise(resolve => {
+    const began = performance.now();
+    const frame = (now) => {
+      const progress = duration ? Math.min((now - began) / duration, 1) : 1;
+      setWheelRotation(from + (to - from) * (1 - Math.pow(1 - progress, 4)));
+      setWheelReadout(wheelSliceAtPointer().name);
+      if (progress < 1) requestAnimationFrame(frame);
+      else resolve();
+    };
+    requestAnimationFrame(frame);
+  });
+
+  setWheelRotation(to % 360);
+  wheel.spinning = false;
+  wheel.held = { lotteryId: lottery.id, key: slice.key, name: winner.trainerName };
+  paintWheel();
+  setWheelReadout(`Winner: ${winner.trainerName}`, 'winner');
+}
+
 // Returns the winner's name, or null if nothing could be drawn.
 async function drawOneWinner(lottery) {
-  const pool = lotteryState.entrants.filter(e => !e.skipped && !e.ineligible && !isWinner(lottery, e.trainerName));
+  const pool = drawablePool(lottery);
   if (pool.length === 0) {
     showToast(lotteryState.entrants.length ? 'No one left to draw' : 'No entrants to draw from');
     return null;
@@ -872,18 +1068,23 @@ async function drawOneWinner(lottery) {
   const nodes = pool.map(e => document.querySelector(`.lottery-entrant[data-key="${CSS.escape(trainerKey(e.trainerName))}"]`));
   const winnerNode = nodes[pool.indexOf(winner)];
 
-  const ticks = pool.length > 1 ? 24 : 1;
-  let last = null;
-  for (let i = 0; i < ticks; i++) {
-    let node = i === ticks - 1 ? winnerNode : nodes[randomIndex(nodes.length)];
-    if (node === last && nodes.length > 1 && i !== ticks - 1) node = nodes[(nodes.indexOf(node) + 1) % nodes.length];
-    if (last) last.classList.remove('is-drawing');
-    node.classList.add('is-drawing');
-    node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    last = node;
-    await new Promise(r => setTimeout(r, 50 + i * i * 0.8));
+  const spun = wheelIsOn();
+  if (spun) {
+    await spinWheelTo(lottery, pool, winner);
+  } else {
+    const ticks = pool.length > 1 ? 24 : 1;
+    let last = null;
+    for (let i = 0; i < ticks; i++) {
+      let node = i === ticks - 1 ? winnerNode : nodes[randomIndex(nodes.length)];
+      if (node === last && nodes.length > 1 && i !== ticks - 1) node = nodes[(nodes.indexOf(node) + 1) % nodes.length];
+      if (last) last.classList.remove('is-drawing');
+      node.classList.add('is-drawing');
+      node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      last = node;
+      await new Promise(r => setTimeout(r, 50 + i * i * 0.8));
+    }
+    winnerNode.classList.remove('is-drawing');
   }
-  winnerNode.classList.remove('is-drawing');
 
   try {
     const data = await callSheet({ action: 'recordWinner', id: lottery.id, trainerName: winner.trainerName });
@@ -893,7 +1094,7 @@ async function drawOneWinner(lottery) {
     renderLotteryEntrants();
     setLotteryButtonsDisabled(true);
     const node = document.querySelector(`.lottery-entrant[data-key="${CSS.escape(trainerKey(winner.trainerName))}"]`);
-    if (node) node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (node && !spun) node.scrollIntoView({ block: 'center', behavior: 'smooth' });
     showToast(`Winner: ${winner.trainerName}`);
     return winner.trainerName;
   } catch (err) {
