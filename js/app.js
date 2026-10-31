@@ -146,7 +146,11 @@ function plural(n, word) {
 // Wins from before the changelog existed only have their event's date.
 function formatChangeTime(entry) {
   const date = new Date(entry.at);
-  return entry.dateOnly ? date.toLocaleDateString() : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  return entry.dateOnly ? date.toLocaleDateString() : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' });
+}
+
+function formatTimeWithSeconds(value) {
+  return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 }
 
 function renderTrainers() {
@@ -179,7 +183,7 @@ function renderTrainers() {
             <span class="badge badge-active">${plural(t.redemptions, 'code')}</span>
             ${t.wins.length ? `<span class="badge badge-winner">${plural(t.wins.length, 'win')}</span>` : ''}
           </span>
-          <span class="code-meta">${t.lastSeen ? 'Last seen ' + new Date(t.lastSeen).toLocaleDateString() : ''}</span>
+          <span class="code-meta">${t.lastSeen ? 'Last seen ' + new Date(t.lastSeen).toLocaleString() : ''}</span>
         </summary>
         <div class="trainer-detail">
           <div><h4>Events attended</h4>${events}</div>
@@ -1398,7 +1402,7 @@ function renderEventAttendees() {
         ${a.checkedIn ? '<span class="badge badge-new">Checked in</span>' : ''}
         ${EVENT_ALERTS_ENABLED && a.alertsOn ? '<span class="badge badge-event" title="Turned on event alerts on their phone">Alerts on</span>' : ''}
       </span>
-      <span class="code-meta">${new Date(a.firstSeen).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+      <span class="code-meta">${formatTimeWithSeconds(a.firstSeen)}</span>
       <span class="lottery-entrant-actions">
         <button type="button" class="btn btn-small btn-danger" data-action="remove-attendee">Remove</button>
       </span>
@@ -1482,12 +1486,15 @@ document.getElementById('event-alert-form').addEventListener('submit', async (e)
 });
 
 function redeemedCodeChip(scan, entry) {
-  const time = new Date(scan.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const time = formatTimeWithSeconds(scan.timestamp);
+  const showQr = `<button type="button" class="btn btn-small btn-primary" data-action="show-code-qr" data-code="${escapeHtml(scan.code)}"
+    title="Show this code's QR so the trainer can scan it again">Show QR</button>`;
   const status = !entry ? '<span class="code-status">not in your codes</span>'
-    : entry.active !== false ? '<span class="code-status is-active">active</span>'
+    : entry.active !== false ? `<span class="code-status is-active">active</span>${showQr}`
     : `<span class="code-status">used</span>
        <button type="button" class="btn btn-small btn-secondary" data-action="reactivate-code" data-code="${escapeHtml(scan.code)}"
-         title="Put this code back in Active Codes if the trainer couldn't redeem it">Reactivate</button>`;
+         title="Put this code back in Active Codes if the trainer couldn't redeem it">Reactivate</button>
+       ${showQr}`;
   return `
     <span class="attendee-code">
       <span class="attendee-code-value">${escapeHtml(scan.code)}</span>
@@ -1508,12 +1515,78 @@ async function reactivateFromCheckIn(code) {
     }
     renderEventAttendees();
     showToast(`${code} is active again`);
+    return true;
   } catch (err) {
     showToast('Could not reactivate: ' + err.message);
+    return false;
   }
 }
 
+let openQrCode = null;
+
+function openCodeQr(code, trainerName) {
+  const image = document.getElementById('code-qr-image');
+  image.innerHTML = '';
+  const size = Math.min(window.innerWidth - 96, window.innerHeight - 260, 320);
+  new QRCode(image, {
+    text: getRedeemUrl(code),
+    width: size,
+    height: size,
+    colorDark: '#1a1a2e',
+    colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M,
+  });
+  document.getElementById('code-qr-trainer').textContent = trainerName;
+  document.getElementById('code-qr-text').textContent = code;
+  document.getElementById('code-qr-overlay').classList.remove('hidden');
+  document.getElementById('code-qr-close').focus();
+  openQrCode = code;
+}
+
+// A scan marks the code used on the sheet, so catch up on closing and the row offers Reactivate again.
+async function closeCodeQr() {
+  const code = openQrCode;
+  if (!code) return;
+  openQrCode = null;
+  document.getElementById('code-qr-overlay').classList.add('hidden');
+  try {
+    const status = await callSheet({ action: 'getCodeStatus', code });
+    const codes = getCodes();
+    const entry = codes.find(c => c.code === code);
+    if (entry && status.exists && entry.active !== status.active) {
+      entry.active = status.active;
+      saveCodes(codes);
+      renderEventAttendees();
+    }
+  } catch {}
+}
+
+document.getElementById('code-qr-close').addEventListener('click', closeCodeQr);
+document.getElementById('code-qr-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'code-qr-overlay') closeCodeQr();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeCodeQr();
+});
+
 document.getElementById('event-attendees').addEventListener('click', async (e) => {
+  const showQr = e.target.closest('[data-action="show-code-qr"]');
+  if (showQr) {
+    const code = showQr.dataset.code;
+    const name = showQr.closest('.lottery-entrant').dataset.name;
+    const entry = getCodes().find(c => c.code === code);
+    // A used code has to go back to active first, or it wouldn't count as available while they scan it.
+    if (entry && entry.active === false) {
+      if (!confirm(`${code} is marked used. Reactivate it and show its QR for ${name}?`)) return;
+      showQr.disabled = true;
+      if (!await reactivateFromCheckIn(code)) {
+        showQr.disabled = false;
+        return;
+      }
+    }
+    openCodeQr(code, name);
+    return;
+  }
   const reactivate = e.target.closest('[data-action="reactivate-code"]');
   if (reactivate) {
     const code = reactivate.dataset.code;
