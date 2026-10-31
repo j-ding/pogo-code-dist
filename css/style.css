@@ -901,6 +901,28 @@ header h1 {
   flex-wrap: wrap;
 }
 
+.lottery-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.lottery-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.lottery-add input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .lottery-sort {
   display: flex;
   align-items: center;

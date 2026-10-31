@@ -17,7 +17,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 26;
+var SCRIPT_VERSION = 27;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -284,6 +284,14 @@ function handleGet(e) {
 
   if (action === 'removeEntrant') {
     return jsonOut(removeEntrant(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'addEntrant') {
+    return jsonOut(addEntrant(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'markWinner') {
+    return jsonOut(markWinner(p.id || '', p.trainerName || ''));
   }
 
   if (action === 'skipWinner') {
@@ -1600,8 +1608,8 @@ function addRedeemerToEvents(ids, trainerName, timestamp, deviceId, seen) {
 // ---------- Lotteries ----------
 
 // Lotteries tab: Id | Name | Created At | Since | Closed At | Winners (JSON array) | Overrides (JSON) | Winner Count | Event ID
-// Overrides = { excluded: [trainerKey], renames: { originalTrainerKey: displayName } } so admin edits
-// apply to entrants without touching the ScanLog or CheckIns.
+// Overrides = { excluded: [trainerKey], renames: { originalTrainerKey: displayName }, added: [trainerName] } so
+// admin edits apply to entrants without touching the ScanLog or CheckIns.
 // Lotteries without an Event ID predate events and still use their own check-in date and sign-ups.
 function getLotteriesSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1631,7 +1639,7 @@ function parseRules(value) {
 function parseOverrides(value) {
   var o = {};
   try { o = JSON.parse(value || '{}') || {}; } catch (err) {}
-  return { excluded: o.excluded || [], renames: o.renames || {}, skipped: o.skipped || [] };
+  return { excluded: o.excluded || [], renames: o.renames || {}, skipped: o.skipped || [], added: o.added || [] };
 }
 
 function saveLotteryFields(found) {
@@ -1917,8 +1925,49 @@ function removeEntrant(id, trainerName) {
   if (!key) return { error: 'Trainer name is required' };
   return entrantMutation(id, function(found) {
     if (found.overrides.excluded.indexOf(key) === -1) found.overrides.excluded.push(key);
+    found.overrides.added = found.overrides.added.filter(function(n) {
+      return trainerKey(resolveEntrantName(found.overrides, n)) !== key;
+    });
     found.lottery.winners = withoutKey(found.lottery.winners, key);
     found.changes = [[trainerName, 'Removed from lottery']];
+  });
+}
+
+// Typed in by an admin, so it also brings back someone who was removed from this lottery.
+function addEntrant(id, trainerName) {
+  trainerName = String(trainerName).replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9]+$/.test(trainerName)) return { error: 'Trainer names are letters and numbers only' };
+
+  return entrantMutation(id, function(found) {
+    var name = resolveEntrantName(found.overrides, trainerName);
+    var key = trainerKey(name);
+    if (buildEntrants(found).some(function(e) { return trainerKey(e.trainerName) === key; })) {
+      return name + ' is already on the list';
+    }
+    found.overrides.excluded = found.overrides.excluded.filter(function(k) { return k !== key; });
+    found.overrides.added.push(trainerName);
+    found.changes = [[name, 'Added to lottery']];
+  });
+}
+
+// An admin's call, so unlike a draw it overrides draw rules and a skip, and makes room if every winner is drawn.
+function markWinner(id, trainerName) {
+  var key = trainerKey(trainerName);
+  if (!key) return { error: 'Trainer name is required' };
+
+  return entrantMutation(id, function(found) {
+    var entrant = buildEntrants(found).filter(function(e) { return trainerKey(e.trainerName) === key; })[0];
+    if (!entrant) return trainerName + ' is not on this lottery\'s list';
+    var winners = found.lottery.winners;
+    if (winners.some(function(w) { return trainerKey(w) === key; })) return;
+    if (winners.length >= 10) return 'A lottery can have at most 10 winners';
+    winners.push(entrant.trainerName);
+    if (winners.length > found.lottery.winnerCount) {
+      getLotteriesSheet().getRange(found.row, 8).setValue(winners.length);
+      found.lottery.winnerCount = winners.length;
+    }
+    found.overrides.skipped = found.overrides.skipped.filter(function(k) { return k !== key; });
+    found.changes = [[entrant.trainerName, 'Marked as winner']];
   });
 }
 
@@ -2050,6 +2099,7 @@ function buildEntrants(found) {
   }
 
   function sorted() {
+    overrides.added.forEach(function(n) { add(n, 'manual'); });
     var winnerKeys = found.lottery.winners.map(trainerKey);
     var reasons = ineligibleReasons(found);
     var list = Object.keys(entrants).map(function(k) {
@@ -2192,7 +2242,7 @@ function getTrainerHistory() {
       var p = person(row[2]);
       if (!p) return;
       logged(p, row[0], row[3] + ': ' + row[4]);
-      if (row[3] === 'Won') loggedWins[trainerKey(row[2]) + '|' + row[4]] = true;
+      if (row[3] === 'Won' || row[3] === 'Marked as winner') loggedWins[trainerKey(row[2]) + '|' + row[4]] = true;
     });
   }
 

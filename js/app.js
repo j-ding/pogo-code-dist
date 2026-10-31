@@ -598,6 +598,7 @@ function renderLotteryEntrants() {
           <input type="text" class="lottery-entrant-input" value="${escapeHtml(e.trainerName)}" aria-label="Trainer name" required>
           <span class="lottery-entrant-actions">
             <button type="submit" class="btn btn-small btn-primary">Save</button>
+            ${winner ? '' : '<button type="button" class="btn btn-small btn-secondary" data-action="mark-winner">Mark Winner</button>'}
             <button type="button" class="btn btn-small btn-secondary" data-action="cancel-edit">Cancel</button>
           </span>
         </form>
@@ -610,6 +611,7 @@ function renderLotteryEntrants() {
       e.ineligible ? `<span class="badge badge-skipped" title="Excluded by this lottery's draw rules">${escapeHtml(e.ineligible)}</span>` : '',
       e.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : '',
       e.signedUp ? '<span class="badge badge-new">Lottery sign-up</span>' : '',
+      e.manual ? '<span class="badge badge-new">Added by hand</span>' : '',
       e.checkedIn ? '<span class="badge badge-new">Checked in</span>' : '',
       e.campfire ? `<span class="badge badge-new">${e.checkIns > 1 ? `${e.checkIns} Campfire check-ins` : 'Campfire check-in'}</span>` : '',
       e.entries > 1 ? `<span class="badge badge-entries" title="Chances in the draw">×${e.entries} entries</span>` : '',
@@ -732,6 +734,18 @@ async function handleEntrantAction(action, row) {
       if (!confirm(`Remove ${name} from "${lottery.name}"? They won't be able to sign up for it again.`)) return;
       applyLotteryUpdate(await callSheet({ action: 'removeEntrant', id: lottery.id, trainerName: name }));
       showToast(`${name} removed`);
+    } else if (action === 'mark-winner') {
+      const entrant = lotteryState.entrants.find(x => trainerKey(x.trainerName) === row.dataset.key);
+      const notes = [
+        entrant && entrant.ineligible ? `This lottery's draw rules exclude them (${entrant.ineligible}).` : '',
+        entrant && entrant.skipped ? 'They were skipped, and this restores them.' : '',
+        lottery.winners.length >= winnerCountOf(lottery) ? 'All winners are drawn, so this raises the winner count by 1.' : '',
+      ].filter(Boolean).join('\n');
+      if (!confirm(`Mark ${name} as a winner of "${lottery.name}"?${notes ? `\n\n${notes}` : ''}`)) return;
+      const data = await callSheet({ action: 'markWinner', id: lottery.id, trainerName: name });
+      lotteryState.editingKey = null;
+      applyLotteryUpdate(data);
+      showToast(`${name} marked as a winner`);
     } else if (action === 'unwin') {
       if (!confirm(`Undo ${name}'s win? They'll go back into the draw.`)) return;
       applyLotteryUpdate(await callSheet({ action: 'unmarkWinner', id: lottery.id, trainerName: name }));
@@ -782,6 +796,32 @@ document.getElementById('lottery-list').addEventListener('submit', async (e) => 
   } catch (err) {
     form.querySelectorAll('button').forEach(b => { b.disabled = false; });
     showToast('Could not rename: ' + err.message);
+  }
+});
+
+document.getElementById('lottery-add-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const lottery = selectedLottery();
+  if (!lottery || lotteryState.drawing) return;
+
+  const input = document.getElementById('lottery-add-name');
+  const name = input.value.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9]+$/.test(name)) {
+    showToast('Trainer names are letters and numbers only');
+    return;
+  }
+
+  const button = document.getElementById('lottery-add-submit');
+  button.disabled = true;
+  try {
+    applyLotteryUpdate(await callSheet({ action: 'addEntrant', id: lottery.id, trainerName: name }));
+    input.value = '';
+    input.focus();
+    showToast(`${name} added`);
+  } catch (err) {
+    showToast('Could not add: ' + err.message);
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -836,7 +876,7 @@ document.getElementById('lottery-winner-count').addEventListener('change', async
 });
 
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-wheel-on', 'lottery-auto-spin', 'lottery-wheel-hub', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
+  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-wheel-on', 'lottery-auto-spin', 'lottery-wheel-hub', 'lottery-add-name', 'lottery-add-submit', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
   document.querySelectorAll('#lottery-rule-lotteries input').forEach(i => { i.disabled = disabled; });
