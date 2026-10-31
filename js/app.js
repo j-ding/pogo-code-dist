@@ -790,6 +790,8 @@ function updateDrawButton(lottery) {
 
   button.disabled = done || lotteryState.drawing;
   document.getElementById('lottery-wheel-hub').disabled = button.disabled;
+  // Auto spin leaves just the button that draws everyone left.
+  button.classList.toggle('hidden', autoSpinIsOn() && remaining > 1);
   button.textContent = done ? (count > 1 ? 'All Winners Drawn' : 'Winner Drawn') : 'Choose 1 Winner';
   button.title = done ? 'All winners have been drawn. Raise the winner count or use Undo Win to draw again.'
     : count > 1 ? `Winner ${drawn + 1} of ${count}` : '';
@@ -819,7 +821,7 @@ document.getElementById('lottery-winner-count').addEventListener('change', async
 });
 
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-wheel-on', 'lottery-wheel-hub', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
+  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-wheel-on', 'lottery-auto-spin', 'lottery-wheel-hub', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
   document.querySelectorAll('#lottery-rule-lotteries input').forEach(i => { i.disabled = disabled; });
@@ -866,18 +868,38 @@ function drawablePool(lottery) {
 // The raffle wheel. Its slices are the people who can be drawn right now, in list order and sized by their
 // entries, and it's rebuilt whenever the list is, so removing or skipping someone takes them off the wheel.
 const WHEEL_KEY = 'pogo_lottery_wheel';
+const AUTO_SPIN_KEY = 'pogo_lottery_auto_spin';
 const WHEEL_COLORS = ['#d63a3f', '#2f6fde', '#c9770a', '#15803d', '#7c4ddb', '#0f8a80'];
 const wheel = { slices: [], rotation: 0, spinning: false, held: null };
 const wheelToggle = document.getElementById('lottery-wheel-on');
-try { wheelToggle.checked = localStorage.getItem(WHEEL_KEY) === 'on'; } catch {}
+const autoSpinToggle = document.getElementById('lottery-auto-spin');
+try {
+  wheelToggle.checked = localStorage.getItem(WHEEL_KEY) === 'on';
+  autoSpinToggle.checked = localStorage.getItem(AUTO_SPIN_KEY) === 'on';
+} catch {}
 
 function wheelIsOn() {
   return wheelToggle.checked;
 }
 
+function autoSpinIsOn() {
+  return wheelIsOn() && autoSpinToggle.checked;
+}
+
+function wheelOptionsChanged() {
+  const lottery = selectedLottery();
+  renderWheel(lottery);
+  if (lottery) updateDrawButton(lottery);
+}
+
 wheelToggle.addEventListener('change', () => {
   try { localStorage.setItem(WHEEL_KEY, wheelToggle.checked ? 'on' : 'off'); } catch {}
-  renderWheel(selectedLottery());
+  wheelOptionsChanged();
+});
+
+autoSpinToggle.addEventListener('change', () => {
+  try { localStorage.setItem(AUTO_SPIN_KEY, autoSpinToggle.checked ? 'on' : 'off'); } catch {}
+  wheelOptionsChanged();
 });
 
 function buildWheelSlices(pool) {
@@ -980,6 +1002,7 @@ function renderWheelWinners(lottery) {
 function renderWheel(lottery) {
   const on = wheelIsOn() && !!lottery;
   document.getElementById('lottery-wheel').classList.toggle('hidden', !on);
+  document.getElementById('lottery-auto-spin-row').classList.toggle('hidden', !on);
   if (!on || wheel.spinning) return;
   renderWheelWinners(lottery);
 
@@ -1206,7 +1229,10 @@ document.getElementById('lottery-delete').addEventListener('click', async () => 
 });
 
 document.getElementById('lottery-draw').addEventListener('click', () => drawLotteryWinners(1));
-document.getElementById('lottery-wheel-hub').addEventListener('click', () => drawLotteryWinners(1));
+document.getElementById('lottery-wheel-hub').addEventListener('click', () => {
+  const lottery = selectedLottery();
+  if (lottery) drawLotteryWinners(autoSpinIsOn() ? winnerCountOf(lottery) - lottery.winners.length : 1);
+});
 document.getElementById('lottery-draw-all').addEventListener('click', () => {
   const lottery = selectedLottery();
   if (lottery) drawLotteryWinners(winnerCountOf(lottery) - lottery.winners.length);

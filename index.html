@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.13.1">
+  <meta name="app-version" content="2.13.2">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.13.1">
+  <link rel="stylesheet" href="css/style.css?v=2.13.2">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -281,6 +281,10 @@
                 <input type="checkbox" id="lottery-wheel-on">
                 <span class="inline-label">Spin the wheel</span>
               </label>
+              <label id="lottery-auto-spin-row" class="rule-check winner-count hidden" title="One tap spins for every remaining winner, ejecting each one before the next spin">
+                <input type="checkbox" id="lottery-auto-spin">
+                <span class="inline-label">Auto spin</span>
+              </label>
               <button id="lottery-draw" class="btn btn-small btn-primary">Choose 1 Winner</button>
               <button id="lottery-draw-all" class="btn btn-small btn-primary hidden"></button>
             </div>
@@ -495,13 +499,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.13.1</span>
+      <span>v2.13.2</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.13.1"></script>
-  <script src="js/error-logger.js?v=2.13.1"></script>
-  <script src="js/auth.js?v=2.13.1"></script>
-  <script src="js/app.js?v=2.13.1"></script>
+  <script src="js/site-config.js?v=2.13.2"></script>
+  <script src="js/error-logger.js?v=2.13.2"></script>
+  <script src="js/auth.js?v=2.13.2"></script>
+  <script src="js/app.js?v=2.13.2"></script>
 </body>
 </html>
