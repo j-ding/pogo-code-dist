@@ -17,7 +17,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 27;
+var SCRIPT_VERSION = 28;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -187,6 +187,10 @@ function handleGet(e) {
 
   if (action === 'getCampfire') {
     return jsonOut(getCampfire(p.id || ''));
+  }
+
+  if (action === 'setCampfireHidden') {
+    return jsonOut(setCampfireHidden(p.name || '', p.hidden === 'true'));
   }
 
   if (action === 'deleteCampfire') {
@@ -422,11 +426,35 @@ function campfireSummary(row) {
 
 function listCampfire() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CampfireExports');
-  if (!sheet || sheet.getLastRow() < 2) return { exports: [] };
+  if (!sheet || sheet.getLastRow() < 2) return { exports: [], hidden: readCampfireHidden() };
   var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
   var list = rows.filter(function(r) { return r[0]; }).map(campfireSummary);
   list.sort(function(a, b) { return a.uploadedAt < b.uploadedAt ? 1 : -1; });
-  return { exports: list };
+  return { exports: list, hidden: readCampfireHidden() };
+}
+
+// CampfireHidden tab: Trainer Key | Trainer Name | Hidden At
+// Only affects what Campfire Exports shows. Hidden people stay in the uploads and can still be lottery entrants.
+function readCampfireHidden() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CampfireHidden');
+  if (!sheet) return [];
+  return sheet.getDataRange().getValues().slice(1).map(function(r) { return String(r[0]); }).filter(Boolean);
+}
+
+function setCampfireHidden(name, hidden) {
+  var key = trainerKey(name);
+  if (!key) return { error: 'Name is required' };
+  return withLock(function() {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('CampfireHidden');
+    if (!sheet) {
+      sheet = ss.insertSheet('CampfireHidden');
+      sheet.appendRow(['Trainer Key', 'Trainer Name', 'Hidden At']);
+    }
+    deleteRowsWhere(sheet, function(r) { return String(r[0]) === key; });
+    if (hidden) sheet.appendRow([key, plainCell(String(name).trim().slice(0, 60)), new Date().toISOString()]);
+    return { success: true, hidden: readCampfireHidden() };
+  });
 }
 
 function getCampfire(id) {

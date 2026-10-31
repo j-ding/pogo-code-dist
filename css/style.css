@@ -706,6 +706,31 @@ header h1 {
   gap: 4px;
 }
 
+.campfire-show-hidden {
+  margin-left: auto;
+}
+
+.campfire-hide {
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.7rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.campfire-name.is-hidden,
+.trainer-row.is-hidden {
+  opacity: 0.55;
+}
+
+.campfire-name.is-hidden {
+  border-style: dashed;
+}
+
 .campfire-name {
   padding: 2px 8px;
   border: 1px solid var(--border);

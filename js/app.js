@@ -2711,7 +2711,23 @@ const CAMPFIRE_STATUS = {
   ACCEPTED: { label: "RSVP'd, didn't check in", badge: 'badge-expired' },
   DECLINED: { label: 'Declined', badge: 'badge-inactive' },
 };
-const campfireState = { exports: [], cache: new Map(), view: 'events', selectedId: null };
+const campfireState = { exports: [], cache: new Map(), view: 'events', selectedId: null, hidden: new Set(), showHidden: false };
+
+function isCampfireHidden(name) {
+  return campfireState.hidden.has(trainerKey(name));
+}
+
+// Whether this name is left out of what's on screen right now.
+function campfireNameGone(name) {
+  return !campfireState.showHidden && isCampfireHidden(name);
+}
+
+function campfireHideButton(name, className) {
+  if (!trainerKey(name)) return '';
+  const hidden = isCampfireHidden(name);
+  return `<button type="button" class="${className}" data-campfire-hide="${escapeHtml(name)}" data-hidden="${hidden}"
+    aria-label="${hidden ? 'Unhide' : 'Hide'} ${escapeHtml(name)}" title="${hidden ? 'Unhide this name' : 'Hide this name from Campfire Exports'}">${hidden ? 'Unhide' : 'Hide'}</button>`;
+}
 
 // Uploads are too large for a GET URL, so this one call is a POST. text/plain avoids a CORS preflight.
 async function postSheet(payload) {
@@ -2743,6 +2759,7 @@ async function loadCampfireList() {
   try {
     const data = await callSheet({ action: 'listCampfire' });
     campfireState.exports = data.exports || [];
+    campfireState.hidden = new Set(data.hidden || []);
   } catch (err) {
     document.getElementById('campfire-view').innerHTML = `<p class="empty-state">Couldn't load exports: ${escapeHtml(err.message)}</p>`;
     return;
@@ -2800,23 +2817,67 @@ function renderCampfire(data) {
   const stat = (value, label) => `<div class="campfire-stat"><span class="campfire-stat-value">${Number(value || 0).toLocaleString()}</span><span class="campfire-stat-label">${label}</span></div>`;
   const exported = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'unknown';
 
+  // Totals come from the export, so take off whatever the people out of view added to them.
+  const gonePeople = people.filter(p => campfireNameGone(p.name));
+  const shownPeople = people.filter(p => !campfireNameGone(p.name));
+  const less = (value, n) => (value == null ? value : Math.max(0, value - n));
+  const goneSum = (field) => gonePeople.reduce((n, p) => n + (p[field] || 0), 0);
+  const hiddenHere = new Set(people.map(p => p.name)
+    .concat(...events.map(ev => (ev.attendees || []).map(a => a.name)))
+    .filter(isCampfireHidden).map(trainerKey));
+
   view.innerHTML = `
     <p class="code-meta campfire-meta">Exported ${escapeHtml(exported)}${data.source ? ' from ' + escapeHtml(data.source) : ''}</p>
     <div class="campfire-stats">
       ${stat(totals.events ?? events.length, 'Events')}
-      ${stat(totals.checkIns, 'Check-ins')}
-      ${stat(totals.uniquePeopleCheckedIn, 'People checked in')}
-      ${stat(totals.rsvpOnly, "RSVP'd, no check-in")}
-      ${stat(totals.uniquePeople ?? people.length, 'People total')}
+      ${stat(less(totals.checkIns, goneSum('checkedInCount')), 'Check-ins')}
+      ${stat(less(totals.uniquePeopleCheckedIn, gonePeople.filter(p => p.checkedInCount > 0).length), 'People checked in')}
+      ${stat(less(totals.rsvpOnly, goneSum('rsvpOnlyCount')), "RSVP'd, no check-in")}
+      ${stat(less(totals.uniquePeople ?? people.length, gonePeople.length), 'People total')}
     </div>
     <div class="campfire-tabs" role="tablist">
       <button type="button" class="btn btn-small ${campfireState.view === 'events' ? 'btn-primary' : 'btn-secondary'}" data-campfire-view="events">Events (${events.length})</button>
-      <button type="button" class="btn btn-small ${campfireState.view === 'people' ? 'btn-primary' : 'btn-secondary'}" data-campfire-view="people">People (${people.length})</button>
+      <button type="button" class="btn btn-small ${campfireState.view === 'people' ? 'btn-primary' : 'btn-secondary'}" data-campfire-view="people">People (${shownPeople.length})</button>
+      ${hiddenHere.size ? `<button type="button" id="campfire-show-hidden" class="btn btn-small btn-secondary campfire-show-hidden" aria-pressed="${campfireState.showHidden}">${campfireState.showHidden ? 'Hide hidden' : 'Show hidden'} (${hiddenHere.size})</button>` : ''}
     </div>
     <div id="campfire-body"></div>
   `;
   if (campfireState.view === 'events') renderCampfireEvents(events);
-  else renderCampfirePeople(people, events);
+  else renderCampfirePeople(shownPeople, events);
+}
+
+// Redraws after a hide or unhide without closing what's open or clearing the search.
+function redrawCampfireInPlace() {
+  const data = campfireState.cache.get(campfireState.selectedId);
+  if (!data) return;
+  const view = document.getElementById('campfire-view');
+  const open = new Set([...view.querySelectorAll('details[open][data-open-key]')].map(d => d.dataset.openKey));
+  const search = document.getElementById('campfire-people-search');
+  const query = search ? search.value : '';
+  renderCampfire(data);
+  const newSearch = document.getElementById('campfire-people-search');
+  if (newSearch && query) {
+    newSearch.value = query;
+    newSearch.dispatchEvent(new Event('input'));
+  }
+  view.querySelectorAll('details[data-open-key]').forEach(d => { d.open = open.has(d.dataset.openKey); });
+}
+
+async function setCampfireNameHidden(name, hide) {
+  const key = trainerKey(name);
+  const apply = (hidden) => {
+    if (hidden) campfireState.hidden.add(key);
+    else campfireState.hidden.delete(key);
+    redrawCampfireInPlace();
+  };
+  apply(hide);
+  showToast(hide ? `${name} hidden` : `${name} unhidden`);
+  try {
+    await callSheet({ action: 'setCampfireHidden', name, hidden: String(hide) });
+  } catch (err) {
+    apply(!hide);
+    showToast(`Could not ${hide ? 'hide' : 'unhide'} ${name}: ${err.message}`);
+  }
 }
 
 function renderCampfireEvents(events) {
@@ -2828,29 +2889,33 @@ function renderCampfireEvents(events) {
   body.innerHTML = `<div class="campfire-list">${events.map(ev => {
     const counts = ev.counts || {};
     const byStatus = { CHECKED_IN: [], ACCEPTED: [], DECLINED: [] };
-    (ev.attendees || []).forEach(a => (byStatus[a.status] || (byStatus[a.status] = [])).push(a.name));
+    const goneByStatus = {};
+    (ev.attendees || []).forEach(a => {
+      if (campfireNameGone(a.name)) goneByStatus[a.status] = (goneByStatus[a.status] || 0) + 1;
+      else (byStatus[a.status] || (byStatus[a.status] = [])).push(a.name);
+    });
     const sections = Object.keys(byStatus).filter(s => byStatus[s].length).map(s => `
       <div class="campfire-attendees">
         <h4>${escapeHtml((CAMPFIRE_STATUS[s] || { label: s }).label)} (${byStatus[s].length})</h4>
-        <div class="campfire-names">${byStatus[s].sort((a, b) => String(a).localeCompare(String(b))).map(n => `<span class="campfire-name">${escapeHtml(n)}</span>`).join('')}</div>
+        <div class="campfire-names">${byStatus[s].sort((a, b) => String(a).localeCompare(String(b))).map(n => `<span class="campfire-name${isCampfireHidden(n) ? ' is-hidden' : ''}">${escapeHtml(n)}${campfireHideButton(n, 'campfire-hide')}</span>`).join('')}</div>
       </div>
     `).join('');
     const details = [
       ev.group && ev.group.name ? `<div><span class="code-meta">Group</span> ${escapeHtml(ev.group.name)}</div>` : '',
-      ev.host ? `<div><span class="code-meta">Host</span> ${escapeHtml(ev.host)}</div>` : '',
+      ev.host && !campfireNameGone(ev.host) ? `<div><span class="code-meta">Host</span> ${escapeHtml(ev.host)}</div>` : '',
       ev.address ? `<div><span class="code-meta">Where</span> ${escapeHtml(ev.address)}</div>` : '',
       /^https:\/\//.test(ev.url || '') ? `<div><a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">Open in Campfire</a></div>` : '',
     ].join('');
     return `
-      <details class="trainer-row campfire-event">
+      <details class="trainer-row campfire-event" data-open-key="event:${escapeHtml(ev.id || '')}">
         <summary>
           <span class="campfire-event-title">
             <span class="lottery-name">${escapeHtml(ev.name || 'Untitled event')}</span>
             <span class="code-meta">${escapeHtml(formatEventTime(ev.startTime, ev.endTime))}</span>
           </span>
           <span class="trainer-stats">
-            <span class="badge badge-active">${counts.checkedIn ?? byStatus.CHECKED_IN.length} checked in</span>
-            <span class="badge badge-expired">${counts.rsvpOnly ?? byStatus.ACCEPTED.length} RSVP only</span>
+            <span class="badge badge-active">${counts.checkedIn != null ? Math.max(0, counts.checkedIn - (goneByStatus.CHECKED_IN || 0)) : byStatus.CHECKED_IN.length} checked in</span>
+            <span class="badge badge-expired">${counts.rsvpOnly != null ? Math.max(0, counts.rsvpOnly - (goneByStatus.ACCEPTED || 0)) : byStatus.ACCEPTED.length} RSVP only</span>
           </span>
         </summary>
         <div class="campfire-event-body">
@@ -2879,13 +2944,14 @@ function renderCampfirePeople(people, events) {
       const history = (p.events || []).map(pe => ({ ev: eventsById.get(pe.eventId), status: pe.status }))
         .sort((a, b) => String(b.ev && b.ev.startTime).localeCompare(String(a.ev && a.ev.startTime)));
       return `
-        <details class="trainer-row">
+        <details class="trainer-row${isCampfireHidden(p.name) ? ' is-hidden' : ''}" data-open-key="person:${escapeHtml(trainerKey(p.name))}">
           <summary>
             <span class="lottery-name">${escapeHtml(p.name || 'Unknown')}</span>
             <span class="trainer-stats">
               <span class="badge badge-active">${plural(p.checkedInCount || 0, 'check-in')}</span>
               ${p.rsvpOnlyCount ? `<span class="badge badge-expired">${p.rsvpOnlyCount} RSVP only</span>` : ''}
             </span>
+            ${campfireHideButton(p.name, 'btn btn-small btn-secondary')}
           </summary>
           <div class="campfire-event-body">
             <ul class="campfire-history">${history.map(h => `
@@ -2905,6 +2971,18 @@ function renderCampfirePeople(people, events) {
 }
 
 document.getElementById('campfire-view').addEventListener('click', (e) => {
+  const hide = e.target.closest('[data-campfire-hide]');
+  if (hide) {
+    // These can sit inside a row's summary, where a click would also open or close the row.
+    e.preventDefault();
+    setCampfireNameHidden(hide.dataset.campfireHide, hide.dataset.hidden !== 'true');
+    return;
+  }
+  if (e.target.closest('#campfire-show-hidden')) {
+    campfireState.showHidden = !campfireState.showHidden;
+    redrawCampfireInPlace();
+    return;
+  }
   const tab = e.target.closest('[data-campfire-view]');
   if (!tab) return;
   campfireState.view = tab.dataset.campfireView;
