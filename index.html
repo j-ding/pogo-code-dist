@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.13.0">
+  <meta name="app-version" content="2.13.1">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.13.0">
+  <link rel="stylesheet" href="css/style.css?v=2.13.1">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -289,7 +289,9 @@
             <div id="lottery-wheel-stage" class="lottery-wheel-stage">
               <canvas id="lottery-wheel-canvas" class="lottery-wheel-canvas" role="img" aria-label="Raffle wheel of the trainers who can be drawn"></canvas>
               <div class="lottery-wheel-pointer"></div>
-              <img src="img/north-fulton-icon.png" class="lottery-wheel-hub" alt="">
+              <button type="button" id="lottery-wheel-hub" class="lottery-wheel-hub" title="Spin the wheel" aria-label="Spin the wheel">
+                <img src="img/north-fulton-icon.png" alt="">
+              </button>
             </div>
             <p id="lottery-wheel-readout" class="lottery-wheel-readout"></p>
             <div id="lottery-wheel-winners" class="lottery-wheel-winners hidden"></div>
@@ -493,13 +495,13 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.13.0</span>
+      <span>v2.13.1</span>
     </footer>
   </div>
 
-  <script src="js/site-config.js?v=2.13.0"></script>
-  <script src="js/error-logger.js?v=2.13.0"></script>
-  <script src="js/auth.js?v=2.13.0"></script>
-  <script src="js/app.js?v=2.13.0"></script>
+  <script src="js/site-config.js?v=2.13.1"></script>
+  <script src="js/error-logger.js?v=2.13.1"></script>
+  <script src="js/auth.js?v=2.13.1"></script>
+  <script src="js/app.js?v=2.13.1"></script>
 </body>
 </html>

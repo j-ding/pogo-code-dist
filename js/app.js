@@ -789,6 +789,7 @@ function updateDrawButton(lottery) {
   const done = remaining === 0;
 
   button.disabled = done || lotteryState.drawing;
+  document.getElementById('lottery-wheel-hub').disabled = button.disabled;
   button.textContent = done ? (count > 1 ? 'All Winners Drawn' : 'Winner Drawn') : 'Choose 1 Winner';
   button.title = done ? 'All winners have been drawn. Raise the winner count or use Undo Win to draw again.'
     : count > 1 ? `Winner ${drawn + 1} of ${count}` : '';
@@ -818,7 +819,7 @@ document.getElementById('lottery-winner-count').addEventListener('change', async
 });
 
 function setLotteryButtonsDisabled(disabled) {
-  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-wheel-on', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
+  ['lottery-draw', 'lottery-draw-all', 'lottery-refresh', 'lottery-toggle', 'lottery-edit', 'lottery-delete', 'lottery-winner-count', 'lottery-wheel-on', 'lottery-wheel-hub', 'lottery-rule-recent', 'lottery-rule-weighted', 'lottery-sort', 'lottery-shuffle'].forEach(id => {
     document.getElementById(id).disabled = disabled;
   });
   document.querySelectorAll('#lottery-rule-lotteries input').forEach(i => { i.disabled = disabled; });
@@ -1205,6 +1206,7 @@ document.getElementById('lottery-delete').addEventListener('click', async () => 
 });
 
 document.getElementById('lottery-draw').addEventListener('click', () => drawLotteryWinners(1));
+document.getElementById('lottery-wheel-hub').addEventListener('click', () => drawLotteryWinners(1));
 document.getElementById('lottery-draw-all').addEventListener('click', () => {
   const lottery = selectedLottery();
   if (lottery) drawLotteryWinners(winnerCountOf(lottery) - lottery.winners.length);
