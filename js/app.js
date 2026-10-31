@@ -143,6 +143,12 @@ function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
+// Wins from before the changelog existed only have their event's date.
+function formatChangeTime(entry) {
+  const date = new Date(entry.at);
+  return entry.dateOnly ? date.toLocaleDateString() : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 function renderTrainers() {
   const list = document.getElementById('trainer-list');
   const query = trainerKey(document.getElementById('trainer-search').value);
@@ -161,6 +167,9 @@ function renderTrainers() {
     const wins = t.wins.length
       ? `<ul>${t.wins.map(w => `<li>${escapeHtml(w.lottery)} <span class="code-meta">${escapeHtml(w.event || '')}${w.date ? ' · ' + new Date(w.date).toLocaleDateString() : ''}</span></li>`).join('')}</ul>`
       : '<p class="code-meta">No lottery wins.</p>';
+    const changelog = !t.changelog ? '<p class="code-meta">Redeploy the Apps Script to see this.</p>'
+      : t.changelog.length ? `<ul>${t.changelog.map(c => `<li>${escapeHtml(c.text)} <span class="code-meta">${formatChangeTime(c)}</span></li>`).join('')}</ul>`
+      : '<p class="code-meta">Nothing yet.</p>';
     return `
       <details class="trainer-row">
         <summary>
@@ -175,6 +184,7 @@ function renderTrainers() {
         <div class="trainer-detail">
           <div><h4>Events attended</h4>${events}</div>
           <div><h4>Lottery wins</h4>${wins}</div>
+          <div class="trainer-changelog"><h4>Changelog</h4>${changelog}</div>
         </div>
       </details>
     `;
@@ -187,6 +197,7 @@ document.getElementById('trainer-refresh').addEventListener('click', loadTrainer
 const COMMUNITY_LINKS = {
   discord: 'https://discord.gg/EhGPPT4sPA',
   campfire: 'https://campfire.onelink.me/eBr8?af_dp=campfire://&af_force_deeplink=true&deep_link_sub1=cj1jbHVicyZjPWU1N2IyZWZhLTI5NTktNDA2MC1hNzg5LWI4ZGIyZDU3OWFhNiZpPXRydWU=',
+  webstore: 'https://store.pokemongo.com/',
 };
 
 let communityRendered = false;
@@ -1377,7 +1388,7 @@ function renderEventAttendees() {
     list.innerHTML = '<p class="empty-state">No one has checked in yet.</p>';
     return;
   }
-  renderEventAlertSummary();
+  if (EVENT_ALERTS_ENABLED) renderEventAlertSummary();
   const knownCodes = new Map(getCodes().map(c => [c.code, c]));
   list.innerHTML = attendees.map(a => `
     <div class="lottery-entrant attendee-row" data-name="${escapeHtml(a.trainerName)}">
@@ -1385,7 +1396,7 @@ function renderEventAttendees() {
       <span class="lottery-badges">
         ${a.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : ''}
         ${a.checkedIn ? '<span class="badge badge-new">Checked in</span>' : ''}
-        ${a.alertsOn ? '<span class="badge badge-event" title="Turned on event alerts on their phone">Alerts on</span>' : ''}
+        ${EVENT_ALERTS_ENABLED && a.alertsOn ? '<span class="badge badge-event" title="Turned on event alerts on their phone">Alerts on</span>' : ''}
       </span>
       <span class="code-meta">${new Date(a.firstSeen).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
       <span class="lottery-entrant-actions">
@@ -1395,6 +1406,9 @@ function renderEventAttendees() {
     </div>
   `).join('');
 }
+
+// Tabled for now, along with the alert box in index.html. See the note at the top of js/alerts.js.
+const EVENT_ALERTS_ENABLED = false;
 
 // Event alerts: whether OneSignal is set up (the Apps Script only shares the public app id).
 let alertsConfigured = null;

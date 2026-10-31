@@ -1,3 +1,6 @@
+// Tabled for now: no page loads this file, because it slowed down redeeming and iPhones can't get alerts.
+// To bring alerts back, load it on redeem.html and checkin.html again (with the alerts-row checkbox and the
+// PogoAlerts calls in redeem.js and checkin.js, all in git history) and set EVENT_ALERTS_ENABLED in app.js.
 // Optional event alerts ("We're starting the raffle soon") through OneSignal's free web push.
 // Nothing loads unless the Apps Script has ONESIGNAL_APP_ID set, and the opt-in checkbox only shows on
 // browsers that can receive web push (iPhones only can from a site added to the Home Screen).

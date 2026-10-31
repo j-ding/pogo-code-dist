@@ -17,7 +17,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 25;
+var SCRIPT_VERSION = 26;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -1469,6 +1469,7 @@ function removeAttendee(id, trainerName) {
     deleteRowsWhere(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CheckIns'), function(r) {
       return String(r[1]) === id && trainerKey(r[2]) === key;
     });
+    logTrainerChanges([[trainerName, 'Removed from event']], found.event.name);
     return { success: true, attendees: withRedeemedCodes(found.event, eventAttendees(id)) };
   });
 }
@@ -1737,6 +1738,7 @@ function recordWinner(id, trainerName) {
     if (!already && winners.length >= found.lottery.winnerCount) return { error: 'All winners have been drawn' };
     if (!already) winners.push(trainerName);
     getLotteriesSheet().getRange(found.row, 6).setValue(JSON.stringify(winners));
+    if (!already) logTrainerChanges([[trainerName, 'Won']], found.lottery.name);
     return { success: true, winners: winners };
   });
 }
@@ -1874,6 +1876,7 @@ function entrantMutation(id, fn) {
     var err = fn(found);
     if (err) return { error: err };
     saveLotteryFields(found);
+    if (found.changes) logTrainerChanges(found.changes, found.lottery.name);
     return { success: true, lottery: found.lottery, entrants: buildEntrants(found) };
   });
 }
@@ -1904,6 +1907,8 @@ function renameEntrant(id, oldName, newName) {
       winners.push(newName);
       found.lottery.winners = winners;
     }
+    found.changes = [[newName, 'Renamed from ' + oldName]];
+    if (oldKey !== newKey) found.changes.push([oldName, 'Renamed to ' + newName]);
   });
 }
 
@@ -1913,6 +1918,7 @@ function removeEntrant(id, trainerName) {
   return entrantMutation(id, function(found) {
     if (found.overrides.excluded.indexOf(key) === -1) found.overrides.excluded.push(key);
     found.lottery.winners = withoutKey(found.lottery.winners, key);
+    found.changes = [[trainerName, 'Removed from lottery']];
   });
 }
 
@@ -1921,6 +1927,7 @@ function unmarkWinner(id, trainerName) {
   if (!key) return { error: 'Trainer name is required' };
   return entrantMutation(id, function(found) {
     found.lottery.winners = withoutKey(found.lottery.winners, key);
+    found.changes = [[trainerName, 'Win undone']];
   });
 }
 
@@ -1931,6 +1938,7 @@ function skipWinner(id, trainerName) {
   return entrantMutation(id, function(found) {
     found.lottery.winners = withoutKey(found.lottery.winners, key);
     if (found.overrides.skipped.indexOf(key) === -1) found.overrides.skipped.push(key);
+    found.changes = [[trainerName, 'Skipped as a winner']];
   });
 }
 
@@ -1939,6 +1947,7 @@ function unskipEntrant(id, trainerName) {
   if (!key) return { error: 'Trainer name is required' };
   return entrantMutation(id, function(found) {
     found.overrides.skipped = found.overrides.skipped.filter(function(k) { return k !== key; });
+    found.changes = [[trainerName, 'Restored to the draw']];
   });
 }
 
@@ -2097,6 +2106,37 @@ function buildEntrants(found) {
 
 // ---------- Trainer history ----------
 
+// TrainerLog tab: Timestamp | Trainer Key | Trainer Name | Change | Where
+// Holds admin changes, which would otherwise leave no trace. Check-ins, redemptions and sign-ups already have
+// timestamped rows of their own, so the public pages never write here and stay as fast as they were.
+function trainerLogSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('TrainerLog');
+  if (!sheet) {
+    sheet = ss.insertSheet('TrainerLog');
+    sheet.appendRow(['Timestamp', 'Trainer Key', 'Trainer Name', 'Change', 'Where']);
+  }
+  return sheet;
+}
+
+// A leading apostrophe stops a name or title from being read as a sheet formula.
+function plainCell(value) {
+  var text = String(value);
+  return /^[=+\-@]/.test(text) ? "'" + text : text;
+}
+
+// changes: [[trainerName, change], ...]. The change itself has already been saved, so a logging problem
+// shouldn't report it as failed.
+function logTrainerChanges(changes, where) {
+  try {
+    var sheet = trainerLogSheet();
+    var now = new Date().toISOString();
+    changes.forEach(function(c) {
+      sheet.appendRow([now, trainerKey(c[0]), plainCell(c[0]), plainCell(c[1]), plainCell(where)]);
+    });
+  } catch (err) {}
+}
+
 function getTrainerHistory() {
   var people = {};
 
@@ -2104,13 +2144,18 @@ function getTrainerHistory() {
     var name = String(rawName || '').trim();
     var key = trainerKey(name);
     if (!key) return null;
-    if (!people[key]) people[key] = { trainerName: name, events: [], redemptions: 0, wins: [], lastSeen: '' };
+    if (!people[key]) people[key] = { trainerName: name, events: [], redemptions: 0, wins: [], lastSeen: '', changelog: [] };
     return people[key];
   }
 
   function seen(p, value) {
     var iso = toIso(value);
     if (iso && iso > p.lastSeen) p.lastSeen = iso;
+  }
+
+  function logged(p, value, text, dateOnly) {
+    var at = toIso(value);
+    if (at) p.changelog.push({ at: at, text: text, dateOnly: !!dateOnly });
   }
 
   var eventsById = {};
@@ -2122,6 +2167,7 @@ function getTrainerHistory() {
     var p = person(row[2]);
     if (!ev || !p) return;
     seen(p, row[0]);
+    logged(p, row[0], (String(row[4]) === 'redeem' ? 'Checked in by redeeming a code: ' : 'Checked in: ') + ev.name);
     var mark = trainerKey(row[2]) + '|' + ev.id;
     if (attended[mark]) return;
     attended[mark] = true;
@@ -2135,22 +2181,49 @@ function getTrainerHistory() {
       if (!p) return;
       p.redemptions++;
       seen(p, row[0]);
+      logged(p, row[0], 'Redeemed code: ' + row[1]);
     });
   }
 
-  readLotteries().forEach(function(r) {
+  var loggedWins = {};
+  var logSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('TrainerLog');
+  if (logSheet) {
+    logSheet.getDataRange().getValues().slice(1).forEach(function(row) {
+      var p = person(row[2]);
+      if (!p) return;
+      logged(p, row[0], row[3] + ': ' + row[4]);
+      if (row[3] === 'Won') loggedWins[trainerKey(row[2]) + '|' + row[4]] = true;
+    });
+  }
+
+  var lotteries = readLotteries();
+  var lotteryNames = {};
+  lotteries.forEach(function(r) {
     var l = r.lottery;
+    lotteryNames[l.id] = l.name;
     var ev = l.eventId && eventsById[l.eventId];
     l.winners.forEach(function(w) {
       var p = person(w);
-      if (p) p.wins.push({ lottery: l.name, event: ev ? ev.name : '', date: ev ? ev.date : l.since });
+      if (!p) return;
+      var date = ev ? ev.date : l.since;
+      p.wins.push({ lottery: l.name, event: ev ? ev.name : '', date: date });
+      if (!loggedWins[trainerKey(w) + '|' + l.name]) logged(p, date, 'Won: ' + l.name, true);
     });
   });
+
+  var entrySheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Lottery');
+  if (entrySheet) {
+    entrySheet.getDataRange().getValues().slice(1).forEach(function(row) {
+      var p = person(row[1]);
+      if (p && lotteryNames[String(row[3])]) logged(p, row[0], 'Entered lottery: ' + lotteryNames[String(row[3])]);
+    });
+  }
 
   var list = Object.keys(people).map(function(k) {
     var p = people[k];
     p.events.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
     p.wins.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+    p.changelog.sort(function(a, b) { return a.at < b.at ? 1 : -1; });
     return p;
   });
   list.sort(function(a, b) {

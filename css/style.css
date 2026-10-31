@@ -577,6 +577,15 @@ header h1 {
   padding-left: 18px;
 }
 
+.trainer-changelog {
+  grid-column: 1 / -1;
+}
+
+.trainer-changelog ul {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
 /* Campfire exports */
 .campfire-upload {
   cursor: pointer;

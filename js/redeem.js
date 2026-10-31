@@ -120,8 +120,8 @@ async function checkCooldown(trainerName, scriptUrl) {
   }
 }
 
-// Set when the form is submitted. Leaving for the store would cut off an alerts opt-in still in progress.
-let alertsDone = Promise.resolve();
+// Started when the form is submitted, so this lookup runs alongside the redeem checks instead of after them.
+let locationLookup = null;
 
 function proceedWithRedeem(code, trainerName, redeemUrl) {
   document.getElementById('step-already-redeemed').classList.add('hidden');
@@ -133,7 +133,7 @@ function proceedWithRedeem(code, trainerName, redeemUrl) {
   const language = navigator.language || navigator.userLanguage || '';
   const screenRes = `${screen.width}x${screen.height}`;
 
-  getLocationWithTimeout(2000).then(location => {
+  (locationLookup || getLocationWithTimeout(2000)).then(location => {
     const logData = {
       action: 'logScan',
       timestamp: new Date().toISOString(),
@@ -151,7 +151,7 @@ function proceedWithRedeem(code, trainerName, redeemUrl) {
       scanId: newScanId(),
     };
 
-    Promise.all([sendScanLog(logData), alertsDone]).finally(() => {
+    sendScanLog(logData).finally(() => {
       window.location.href = redeemUrl;
     });
   });
@@ -191,7 +191,6 @@ function init() {
 
   const redeemUrl = POGO_REDEEM_BASE + encodeURIComponent(code);
   setupRememberedName('trainer-name', 'remember-name');
-  PogoAlerts.start(getScriptUrl(), 'alerts-row', 'alerts-optin');
   document.getElementById('display-code').textContent = code;
   document.getElementById('manual-link').href = redeemUrl;
 
@@ -219,9 +218,7 @@ function init() {
 
     rememberTrainerName('remember-name', trainerName);
     setRedeeming(true);
-    // Started before any await, so the browser treats the permission prompt as part of the tap, but not
-    // waited on here, so the redeem checks run at the same time.
-    alertsDone = PogoAlerts.applyChoice('alerts-optin', trainerName);
+    locationLookup = locationLookup || getLocationWithTimeout(2000);
     const scriptUrl = getScriptUrl();
 
     // Both checks are independent, so run them together instead of waiting for one then the other.

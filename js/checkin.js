@@ -136,11 +136,8 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
   const button = document.getElementById('checkin-submit');
   button.disabled = true;
   button.textContent = 'Checking in...';
-  // Started before any await, so the browser treats the permission prompt as part of the tap, but not
-  // waited on, so turning on alerts doesn't slow down the check-in.
   tappedAt = performance.now();
-  markTiming(`tapped, alerts box ${document.getElementById('alerts-optin').checked ? 'ticked' : 'not ticked'}`);
-  PogoAlerts.applyChoice('alerts-optin', trainerName).then(() => markTiming('alerts finished'));
+  markTiming('tapped');
   document.getElementById('checkin-error').classList.add('hidden');
 
   try {
@@ -185,4 +182,3 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
 
 setupRememberedName('checkin-trainer', 'remember-name');
 initCheckInPage();
-PogoAlerts.start(getScriptUrl(), 'alerts-row', 'alerts-optin');
