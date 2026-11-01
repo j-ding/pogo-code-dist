@@ -1424,6 +1424,32 @@ async function loadEventAttendees() {
   }
 }
 
+// How the Checked In list is ordered on screen. Remembered per browser, like the lottery's sort.
+const ATTENDEE_SORT_KEY = 'pogo_attendee_sort';
+let attendeeSort = 'name';
+try { attendeeSort = localStorage.getItem(ATTENDEE_SORT_KEY) || 'name'; } catch {}
+document.getElementById('event-sort').value = attendeeSort;
+
+function sortedAttendees(attendees) {
+  const byName = (a, b) => a.trainerName.toLowerCase().localeCompare(b.trainerName.toLowerCase());
+  const list = [...attendees];
+  if (attendeeSort === 'name') return list.sort(byName);
+  const direction = attendeeSort === 'newest' ? -1 : 1;
+  // Anyone without a usable time goes at the end either way.
+  const time = a => Date.parse(a.firstSeen) || null;
+  return list.sort((a, b) => {
+    const [ta, tb] = [time(a), time(b)];
+    if (ta === null || tb === null) return (ta === null) - (tb === null) || byName(a, b);
+    return (ta - tb) * direction || byName(a, b);
+  });
+}
+
+document.getElementById('event-sort').addEventListener('change', (e) => {
+  attendeeSort = e.target.value;
+  try { localStorage.setItem(ATTENDEE_SORT_KEY, attendeeSort); } catch {}
+  renderEventAttendees();
+});
+
 function renderEventAttendees() {
   const list = document.getElementById('event-attendees');
   const attendees = eventState.attendees;
@@ -1434,7 +1460,7 @@ function renderEventAttendees() {
   }
   if (EVENT_ALERTS_ENABLED) renderEventAlertSummary();
   const knownCodes = new Map(getCodes().map(c => [c.code, c]));
-  list.innerHTML = attendees.map(a => `
+  list.innerHTML = sortedAttendees(attendees).map(a => `
     <div class="lottery-entrant attendee-row" data-name="${escapeHtml(a.trainerName)}">
       <span class="lottery-name">${escapeHtml(a.trainerName)}</span>
       <span class="lottery-badges">
