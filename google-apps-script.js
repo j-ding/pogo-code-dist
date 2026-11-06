@@ -18,7 +18,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 30;
+var SCRIPT_VERSION = 31;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -997,7 +997,7 @@ function logScan(data) {
       isRepeat ? 'Yes' : 'No',
       data.deviceId || '',
       data.scanId || '',
-      codeInfo ? codeInfo.group : '',
+      codeInfo ? textCell(codeInfo.group) : '',
       codeInfo ? bankName(codeInfo.owner) : '',
       by
     ]);
@@ -1219,7 +1219,7 @@ function readGroups() {
   if (!sheet) return [];
   return sheet.getDataRange().getValues().slice(1).map(function(row, i) {
     return {
-      row: i + 2, name: String(row[0] || '').trim(), enabled: row[1] !== 'No', eventId: String(row[2] || '').trim(),
+      row: i + 2, name: cellText(row[0]), enabled: row[1] !== 'No', eventId: String(row[2] || '').trim(),
       owner: bankKeyFromName(row[3])
     };
   });
@@ -1250,7 +1250,7 @@ function setGroupsEvent(groups, eventId, owner) {
     names.forEach(function(name) {
       var row = findGroup(existing, name, owner);
       if (row) sheet.getRange(row.row, 3).setValue(eventId);
-      else if (eventId) sheet.appendRow([name, 'Yes', eventId, owner]);
+      else if (eventId) sheet.appendRow([textCell(name), 'Yes', eventId, owner]);
     });
     return { success: true, groups: groupsResponse() };
   });
@@ -1275,7 +1275,7 @@ function setGroupEnabled(group, enabled, owner) {
     var sheet = getGroupsSheet();
     var existing = findGroup(readGroups(), group, owner);
     if (existing) sheet.getRange(existing.row, 2).setValue(enabled ? 'Yes' : 'No');
-    else sheet.appendRow([group, enabled ? 'Yes' : 'No', '', owner]);
+    else sheet.appendRow([textCell(group), enabled ? 'Yes' : 'No', '', owner]);
     return { success: true, groups: groupsResponse() };
   });
 }
@@ -1291,8 +1291,8 @@ function renameGroup(oldName, newName, owner) {
     if (codes.getLastRow() > 1) {
       var rows = codes.getRange(2, 1, codes.getLastRow() - 1, 6).getValues();
       for (var i = 0; i < rows.length; i++) {
-        if (String(rows[i][1] || '').trim() === oldName && codeOwner(rows[i]) === owner) {
-          codes.getRange(i + 2, 2).setValue(newName);
+        if (cellText(rows[i][1]) === oldName && codeOwner(rows[i]) === owner) {
+          codes.getRange(i + 2, 2).setValue(textCell(newName));
           renamed++;
         }
       }
@@ -1301,7 +1301,7 @@ function renameGroup(oldName, newName, owner) {
     var from = findGroup(groups, oldName, owner);
     var into = findGroup(groups, newName, owner);
     if (from && into) getGroupsSheet().deleteRow(from.row);
-    else if (from) getGroupsSheet().getRange(from.row, 1).setValue(newName);
+    else if (from) getGroupsSheet().getRange(from.row, 1).setValue(textCell(newName));
     return { success: true, renamed: renamed, groups: groupsResponse() };
   });
 }
@@ -1312,13 +1312,13 @@ function deleteGroup(group, owner) {
   return withLock(function() {
     var deletedCodes = [];
     var removed = deleteRowsWhere(getCodesSheet(), function(row) {
-      var match = String(row[1] || '').trim() === group && codeOwner(row) === owner;
+      var match = cellText(row[1]) === group && codeOwner(row) === owner;
       if (match) deletedCodes.push(row[0]);
       return match;
     });
     recordDeletedCodes(deletedCodes);
     var groupsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Groups');
-    deleteRowsWhere(groupsSheet, function(row) { return String(row[0] || '').trim() === group && bankKeyFromName(row[3]) === owner; });
+    deleteRowsWhere(groupsSheet, function(row) { return cellText(row[0]) === group && bankKeyFromName(row[3]) === owner; });
     return { success: true, removed: removed, groups: groupsResponse() };
   });
 }
@@ -1333,7 +1333,7 @@ function setCodeGroup(code, group) {
     for (var i = 0; i < values.length; i++) {
       if (String(values[i][0]).trim().toUpperCase() === target) {
         if (!canTouchCode(codeOwner(values[i]))) return { error: 'That code is in another bank' };
-        sheet.getRange(i + 2, 2).setValue(group);
+        sheet.getRange(i + 2, 2).setValue(textCell(group));
         return { success: true };
       }
     }
@@ -1365,7 +1365,7 @@ function transferCodes(codes, to) {
         continue;
       }
       sheet.getRange(i + 1, 6).setValue(target);
-      moved.push([new Date().toISOString(), code, plainCell(String(rows[i][1] || '')), bankName(owner), bank.name, CURRENT_USER.name]);
+      moved.push([new Date().toISOString(), code, textCell(cellText(rows[i][1])), bankName(owner), bank.name, CURRENT_USER.name]);
     }
     skipped = skipped.concat(Object.keys(wanted));
     if (moved.length) {
@@ -1422,7 +1422,7 @@ function findCodeRow(code) {
   if (!sheet || !target || sheet.getLastRow() < 2) return null;
   var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
   for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]).trim().toUpperCase() === target) return { row: i + 2, group: String(rows[i][1] || '').trim(), owner: codeOwner(rows[i]) };
+    if (String(rows[i][0]).trim().toUpperCase() === target) return { row: i + 2, group: cellText(rows[i][1]), owner: codeOwner(rows[i]) };
   }
   return null;
 }
@@ -1434,10 +1434,10 @@ function backfillScanGroups(sheet) {
   if (lastRow < 2 || !codes || codes.getLastRow() < 2) return;
   var groupByCode = {};
   codes.getRange(2, 1, codes.getLastRow() - 1, 2).getValues().forEach(function(r) {
-    groupByCode[String(r[0]).trim().toUpperCase()] = String(r[1] || '').trim();
+    groupByCode[String(r[0]).trim().toUpperCase()] = cellText(r[1]);
   });
   var scanCodes = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
-  var groups = scanCodes.map(function(r) { return [groupByCode[String(r[0]).trim().toUpperCase()] || '']; });
+  var groups = scanCodes.map(function(r) { return [textCell(groupByCode[String(r[0]).trim().toUpperCase()] || '')]; });
   sheet.getRange(2, 15, groups.length, 1).setValues(groups);
 }
 
@@ -1583,7 +1583,7 @@ function addCodes(list, fromSync) {
       existing[code] = owner;
       newRows.push([
         code,
-        plainCell(c.label || ''),
+        textCell(String(c.label || '').trim()),
         c.expiry || '',
         c.addedAt || new Date().toISOString(),
         c.active === false ? 'No' : 'Yes',
@@ -1671,7 +1671,7 @@ function getLogs() {
       referrer: data[i][10],
       repeat: data[i][11] === 'Yes',
       deviceId: data[i][12] || '',
-      group: data[i][14] || '',
+      group: cellText(data[i][14]),
       bank: data[i][15] || '',
       shownBy: data[i][16] || ''
     });
@@ -1699,7 +1699,7 @@ function getCodesFromSheet() {
     if (!canTouchCode(owner)) continue;
     codes.push({
       code: data[i][0],
-      label: data[i][1],
+      label: cellText(data[i][1]),
       expiry: data[i][2],
       addedAt: data[i][3],
       active: data[i][4] !== 'No',
@@ -1852,7 +1852,7 @@ function readEvents() {
       row: i + 1,
       event: {
         id: String(rows[i][0]),
-        name: String(rows[i][1]),
+        name: cellText(rows[i][1]),
         date: toIso(rows[i][2]),
         createdAt: toIso(rows[i][3]),
         closedAt: closedAt,
@@ -1939,7 +1939,7 @@ function createEvent(name, date) {
   return withLock(function() {
     var id = Utilities.getUuid().split('-')[0];
     var now = new Date().toISOString();
-    getEventsSheet().appendRow([id, name, dateIso, now, '']);
+    getEventsSheet().appendRow([id, textCell(name), dateIso, now, '']);
     var ev = { id: id, name: name, date: dateIso, createdAt: now, closedAt: '', open: true };
 
     // Anyone who already redeemed a code on the event's date counts as checked in.
@@ -2048,7 +2048,7 @@ function withRedeemedCodes(ev, attendees) {
     var a = byKey[trainerKey(row[2])];
     var ts = new Date(row[0]);
     if (!a || !row[1] || isNaN(ts.getTime())) return;
-    var tiedTo = ties[groupTieKey(bankKeyFromName(row[15]), String(row[14] || '').trim())] || '';
+    var tiedTo = ties[groupTieKey(bankKeyFromName(row[15]), cellText(row[14]))] || '';
     // Same rule as redeemerEventIds: tied codes belong to their event, the rest go by date.
     if (tiedTo ? tiedTo !== ev.id : (hasTies || ts < w.since || ts >= w.until)) return;
     var code = String(row[1]).trim().toUpperCase();
@@ -2230,7 +2230,7 @@ function readLotteries() {
       overrides: parseOverrides(rows[i][6]),
       lottery: {
         id: String(rows[i][0]),
-        name: String(rows[i][1]),
+        name: cellText(rows[i][1]),
         createdAt: toIso(rows[i][2]),
         since: toIso(rows[i][3]),
         closedAt: closedAt,
@@ -2264,7 +2264,7 @@ function createLottery(name, eventId) {
     if (!source) return { error: 'Choose an event for this lottery' };
     var id = Utilities.getUuid().split('-')[0];
     var now = new Date().toISOString();
-    getLotteriesSheet().appendRow([id, name, now, source.date, '', '[]', '{}', 1, eventId, '{}']);
+    getLotteriesSheet().appendRow([id, textCell(name), now, source.date, '', '[]', '{}', 1, eventId, '{}']);
     return {
       success: true,
       lottery: {
@@ -2401,7 +2401,7 @@ function updateLottery(id, name, eventId) {
     var source = resolveLotterySource(eventId);
     if (!source) return { error: 'Choose an event for this lottery' };
     var sheet = getLotteriesSheet();
-    sheet.getRange(found.row, 2).setValue(name);
+    sheet.getRange(found.row, 2).setValue(textCell(name));
     sheet.getRange(found.row, 4).setValue(source.date);
     sheet.getRange(found.row, 9).setValue(eventId);
     found.lottery.name = name;
@@ -2731,6 +2731,21 @@ function trainerLogSheet() {
 function plainCell(value) {
   var text = String(value);
   return /^[=+\-@]/.test(text) ? "'" + text : text;
+}
+
+// Sheets turns typed text that looks like a date or number ("Oct 2026", "11/5", "2026") into one, which then
+// can't be matched by name. Group, event and lottery names are written with a leading apostrophe so they stay
+// exactly as typed (Sheets hides the apostrophe and reads the cell back as plain text).
+function textCell(value) {
+  var text = String(value === null || value === undefined ? '' : value);
+  return text ? "'" + text : text;
+}
+
+// A name read back from the sheet. One Sheets already turned into a date reads as the same ISO text the
+// dashboard has been showing for it, so it can still be renamed or deleted by that name.
+function cellText(value) {
+  if (value instanceof Date) return isNaN(value.getTime()) ? '' : value.toISOString();
+  return String(value === null || value === undefined ? '' : value).trim();
 }
 
 // changes: [[trainerName, change], ...]. The change itself has already been saved, so a logging problem
