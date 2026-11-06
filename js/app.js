@@ -10,32 +10,141 @@ function groupOf(code) {
   return String(code.label || '').trim();
 }
 
+// Each login has its own code bank. A code's owner is that login's username, or '' for the overseer.
+function ownerOf(code) {
+  return code.owner || '';
+}
+
+// Every bank has its own groups, so a group is its owner plus its name.
+function groupKey(owner, name) {
+  return `${owner || ''}\n${name}`;
+}
+
 function getGroupStates() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.GROUPS)) || {}; } catch { return {}; }
 }
 
 function saveGroupStates(list) {
   const states = {};
-  (list || []).forEach(g => { states[g.name] = g.enabled !== false; });
+  (list || []).forEach(g => { states[groupKey(g.owner, g.name)] = g.enabled !== false; });
   try { localStorage.setItem(STORAGE_KEYS.GROUPS, JSON.stringify(states)); } catch {}
   const events = {};
-  (list || []).forEach(g => { if (g.eventId) events[g.name] = { id: g.eventId, name: g.eventName || '' }; });
+  (list || []).forEach(g => { if (g.eventId) events[groupKey(g.owner, g.name)] = { id: g.eventId, name: g.eventName || '' }; });
   try { localStorage.setItem(STORAGE_KEYS.GROUP_EVENTS, JSON.stringify(events)); } catch {}
 }
 
 // The event a group is tied to ({ id, name }), or null when its redemptions go by date.
-function groupEvent(name) {
-  try { return (JSON.parse(localStorage.getItem(STORAGE_KEYS.GROUP_EVENTS)) || {})[name] || null; } catch { return null; }
+function groupEvent(owner, name) {
+  try { return (JSON.parse(localStorage.getItem(STORAGE_KEYS.GROUP_EVENTS)) || {})[groupKey(owner, name)] || null; } catch { return null; }
 }
 
-function isGroupEnabled(name) {
-  return getGroupStates()[name] !== false;
+function isGroupEnabled(owner, name) {
+  return getGroupStates()[groupKey(owner, name)] !== false;
 }
 
-// Codes the Display tab hands out: unused and in an enabled group.
+// Codes the Display tab hands out: unused, in an enabled group, and from the bank being shown.
 function getDisplayCodes() {
-  return getCodes().filter(c => c.active !== false && isGroupEnabled(groupOf(c)));
+  const bank = displayBank();
+  return getCodes().filter(c => ownerOf(c) === bank && c.active !== false && isGroupEnabled(bank, groupOf(c)));
 }
+
+// ---------- Logins ----------
+// Who's logged in comes from auth.js. The server enforces every permission; the dashboard just hides what
+// a login can't use. banks lists every code bank ({ key, name, enabled }), refreshed with each sync.
+let banks = [];
+
+function me() {
+  return getCurrentUser() || { key: '', name: '', overseer: false, perms: [] };
+}
+
+function can(perm) {
+  const user = me();
+  return user.overseer || user.perms.includes(perm);
+}
+
+function bankLabel(key) {
+  const bank = banks.find(b => b.key === (key || ''));
+  return bank ? bank.name : (key || 'Overseer');
+}
+
+// Shown By values are lowercase usernames; show them as the login's own spelling.
+function usernameLabel(value) {
+  const key = String(value || '').toLowerCase();
+  if (!key) return '';
+  if (key === me().name.toLowerCase()) return 'you';
+  const bank = banks.find(b => b.name.toLowerCase() === key);
+  return bank ? bank.name : key;
+}
+
+// Elements marked data-needs="perm" (or "overseer") hide for logins without it, including ones drawn later.
+const PERMISSION_KEYS = ['sendCodes', 'checkin', 'checkinRemove', 'checkinCodes', 'checkinDelete', 'lottery', 'lotteryEdit',
+  'lotteryDelete', 'trainers', 'campfire', 'campfireManage', 'logs'];
+const TAB_PERMISSIONS = { checkin: 'checkin', lottery: 'lottery', trainers: 'trainers' };
+
+function applyPermissions() {
+  const user = me();
+  document.body.classList.toggle('is-overseer', user.overseer);
+  PERMISSION_KEYS.forEach(p => document.body.classList.toggle(`lacks-${p}`, !can(p)));
+  document.querySelectorAll('.tab').forEach(tab => {
+    const perm = TAB_PERMISSIONS[tab.dataset.tab];
+    tab.classList.toggle('hidden', !!perm && !can(perm));
+  });
+  document.getElementById('logged-in-as').textContent = user.name ? `Logged in as ${user.name}${user.overseer ? ' (overseer)' : ''}` : '';
+  renderBankPickers();
+  const active = document.querySelector('.tab.active');
+  if (active && active.classList.contains('hidden')) activateTab('active-codes');
+}
+
+function setBanks(list, user) {
+  if (Array.isArray(list)) banks = list;
+  if (user) {
+    const before = JSON.stringify(me());
+    updateSessionUser(user);
+    if (JSON.stringify(me()) !== before) applyPermissions();
+  }
+  renderBankPickers();
+}
+
+// The overseer can look at any bank on Active Codes (or all of them) and show any bank on Display.
+const BANK_VIEW_KEY = 'pogo_bank_view';
+const DISPLAY_BANK_KEY = 'pogo_display_bank';
+
+function codesBankView() {
+  if (!me().overseer) return me().key;
+  let view = '';
+  try { view = localStorage.getItem(BANK_VIEW_KEY) || ''; } catch {}
+  return view === '*' || banks.some(b => b.key === view) ? view : '';
+}
+
+function displayBank() {
+  if (!me().overseer) return me().key;
+  let bank = '';
+  try { bank = localStorage.getItem(DISPLAY_BANK_KEY) || ''; } catch {}
+  return banks.some(b => b.key === bank) ? bank : '';
+}
+
+function renderBankPickers() {
+  const several = me().overseer && banks.length > 1;
+  const option = (b) => `<option value="${escapeHtml(b.key)}">${escapeHtml(b.name)}${b.key === '' ? ' (you)' : ''}${b.enabled ? '' : ' (turned off)'}</option>`;
+  const codesPicker = document.getElementById('codes-bank');
+  codesPicker.innerHTML = banks.map(option).join('') + '<option value="*">All banks</option>';
+  codesPicker.value = codesBankView();
+  document.getElementById('codes-bank-row').classList.toggle('hidden', !several);
+  const displayPicker = document.getElementById('display-bank');
+  displayPicker.innerHTML = banks.map(option).join('');
+  displayPicker.value = displayBank();
+  document.getElementById('display-bank-row').classList.toggle('hidden', !several);
+}
+
+document.getElementById('codes-bank').addEventListener('change', (e) => {
+  try { localStorage.setItem(BANK_VIEW_KEY, e.target.value); } catch {}
+  renderCodesList();
+});
+
+document.getElementById('display-bank').addEventListener('change', (e) => {
+  try { localStorage.setItem(DISPLAY_BANK_KEY, e.target.value); } catch {}
+  initDisplay();
+});
 
 function getCodes() {
   try {
@@ -75,8 +184,14 @@ function getBaseUrl() {
   return PUBLIC_SITE_URL;
 }
 
+// QR links say whose screen they were shown on (by=username), which the scan and check-in logs record.
+function shownByParam() {
+  const name = me().name;
+  return name ? `&by=${encodeURIComponent(name.toLowerCase())}` : '';
+}
+
 function getRedeemUrl(code) {
-  return `${getBaseUrl()}/redeem.html?code=${encodeURIComponent(code)}`;
+  return `${getBaseUrl()}/redeem.html?code=${encodeURIComponent(code)}${shownByParam()}`;
 }
 
 function getDirectRedeemUrl(code) {
@@ -115,9 +230,10 @@ function activateTab(name) {
     refreshCodesQuietly().then(changed => { if (changed && activeTabName() === 'display') initDisplay(); });
   }
   if (name === 'settings') {
-    loadScanLog();
+    if (can('logs')) loadScanLog();
     initCommunity();
-    loadCampfireList();
+    if (can('campfire')) loadCampfireList();
+    if (me().overseer) loadAccounts();
   }
   if (name === 'checkin') initCheckIn();
   if (name === 'lottery') initLottery();
@@ -627,8 +743,8 @@ function renderLotteryEntrants() {
         <span class="lottery-badges">${badges}</span>
         <span class="lottery-entrant-actions">
           ${winnerActions}
-          <button type="button" class="btn btn-small btn-secondary" data-action="edit">Edit</button>
-          <button type="button" class="btn btn-small btn-danger" data-action="remove">Remove</button>
+          <button type="button" class="btn btn-small btn-secondary" data-action="edit" data-needs="lotteryEdit">Edit</button>
+          <button type="button" class="btn btn-small btn-danger" data-action="remove" data-needs="lotteryEdit">Remove</button>
         </span>
       </div>
     `;
@@ -1298,7 +1414,7 @@ document.getElementById('lottery-refresh').addEventListener('click', loadLottery
 const eventState = { events: [], selectedId: null, attendees: [] };
 
 function getCheckInUrl(id) {
-  return `${getBaseUrl()}/checkin.html?event=${encodeURIComponent(id)}`;
+  return `${getBaseUrl()}/checkin.html?event=${encodeURIComponent(id)}${shownByParam()}`;
 }
 
 function selectedEvent() {
@@ -1459,20 +1575,20 @@ function renderEventAttendees() {
     return;
   }
   if (EVENT_ALERTS_ENABLED) renderEventAlertSummary();
-  const knownCodes = new Map(getCodes().map(c => [c.code, c]));
   list.innerHTML = sortedAttendees(attendees).map(a => `
     <div class="lottery-entrant attendee-row" data-name="${escapeHtml(a.trainerName)}">
       <span class="lottery-name">${escapeHtml(a.trainerName)}</span>
       <span class="lottery-badges">
         ${a.redeemed ? '<span class="badge badge-active">Redeemed code</span>' : ''}
         ${a.checkedIn ? '<span class="badge badge-new">Checked in</span>' : ''}
+        ${a.shownBy ? `<span class="badge badge-bank" title="Whose QR they scanned">via ${escapeHtml(usernameLabel(a.shownBy))}</span>` : ''}
         ${EVENT_ALERTS_ENABLED && a.alertsOn ? '<span class="badge badge-event" title="Turned on event alerts on their phone">Alerts on</span>' : ''}
       </span>
       <span class="code-meta">${formatTimeWithSeconds(a.firstSeen)}</span>
       <span class="lottery-entrant-actions">
-        <button type="button" class="btn btn-small btn-danger" data-action="remove-attendee">Remove</button>
+        <button type="button" class="btn btn-small btn-danger" data-action="remove-attendee" data-needs="checkinRemove">Remove</button>
       </span>
-      ${(a.codes || []).length ? `<div class="attendee-codes">${a.codes.map(c => redeemedCodeChip(c, knownCodes.get(c.code))).join('')}</div>` : ''}
+      ${(a.codes || []).length ? `<div class="attendee-codes">${a.codes.map(redeemedCodeChip).join('')}</div>` : ''}
     </div>
   `).join('');
 }
@@ -1551,12 +1667,16 @@ document.getElementById('event-alert-form').addEventListener('submit', async (e)
   }
 });
 
-function redeemedCodeChip(scan, entry) {
+// The server says whether each redeemed code is still on the Codes tab, whether it's active, whose bank
+// it's in, and whether this login may reactivate it or show its QR (its own, or any with that permission).
+function redeemedCodeChip(scan) {
   const time = formatTimeWithSeconds(scan.timestamp);
+  const bank = scan.bank && scan.bank !== me().name ? ` · ${escapeHtml(scan.bank)}'s code` : '';
   const showQr = `<button type="button" class="btn btn-small btn-primary" data-action="show-code-qr" data-code="${escapeHtml(scan.code)}"
     title="Show this code's QR so the trainer can scan it again">Show QR</button>`;
-  const status = !entry ? '<span class="code-status">not in your codes</span>'
-    : entry.active !== false ? `<span class="code-status is-active">active</span>${showQr}`
+  const status = !scan.exists ? '<span class="code-status">deleted from codes</span>'
+    : !scan.canManage ? `<span class="code-status${scan.active ? ' is-active' : ''}">${scan.active ? 'active' : 'used'}</span>`
+    : scan.active ? `<span class="code-status is-active">active</span>${showQr}`
     : `<span class="code-status">used</span>
        <button type="button" class="btn btn-small btn-secondary" data-action="reactivate-code" data-code="${escapeHtml(scan.code)}"
          title="Put this code back in Active Codes if the trainer couldn't redeem it">Reactivate</button>
@@ -1564,21 +1684,35 @@ function redeemedCodeChip(scan, entry) {
   return `
     <span class="attendee-code">
       <span class="attendee-code-value">${escapeHtml(scan.code)}</span>
-      <span class="code-meta">${time}</span>
+      <span class="code-meta">${time}${bank}</span>
       ${status}
     </span>
   `;
 }
 
+// Keeps the Check In list and this device's own code list in step with a code's status on the sheet.
+function setRedeemedCodeActive(code, active) {
+  eventState.attendees.forEach(a => (a.codes || []).forEach(c => { if (c.code === code) c.active = active; }));
+  const codes = getCodes();
+  const entry = codes.find(c => c.code === code);
+  if (entry && entry.active !== active) {
+    entry.active = active;
+    saveCodes(codes);
+  }
+}
+
+function redeemedCode(code) {
+  for (const a of eventState.attendees) {
+    const found = (a.codes || []).find(c => c.code === code);
+    if (found) return found;
+  }
+  return null;
+}
+
 async function reactivateFromCheckIn(code) {
   try {
     await callSheet({ action: 'updateCode', code, active: 'true' });
-    const codes = getCodes();
-    const entry = codes.find(c => c.code === code);
-    if (entry) {
-      entry.active = true;
-      saveCodes(codes);
-    }
+    setRedeemedCodeActive(code, true);
     renderEventAttendees();
     showToast(`${code} is active again`);
     return true;
@@ -1617,11 +1751,9 @@ async function closeCodeQr() {
   document.getElementById('code-qr-overlay').classList.add('hidden');
   try {
     const status = await callSheet({ action: 'getCodeStatus', code });
-    const codes = getCodes();
-    const entry = codes.find(c => c.code === code);
-    if (entry && status.exists && entry.active !== status.active) {
-      entry.active = status.active;
-      saveCodes(codes);
+    const scan = redeemedCode(code);
+    if (status.exists && scan && scan.active !== status.active) {
+      setRedeemedCodeActive(code, status.active);
       renderEventAttendees();
     }
   } catch {}
@@ -1640,9 +1772,9 @@ document.getElementById('event-attendees').addEventListener('click', async (e) =
   if (showQr) {
     const code = showQr.dataset.code;
     const name = showQr.closest('.lottery-entrant').dataset.name;
-    const entry = getCodes().find(c => c.code === code);
+    const entry = redeemedCode(code);
     // A used code has to go back to active first, or it wouldn't count as available while they scan it.
-    if (entry && entry.active === false) {
+    if (entry && !entry.active) {
       if (!confirm(`${code} is marked used. Reactivate it and show its QR for ${name}?`)) return;
       showQr.disabled = true;
       if (!await reactivateFromCheckIn(code)) {
@@ -1802,7 +1934,7 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
         continue;
       }
       existingSet.add(code);
-      const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString(), pending: true };
+      const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString(), pending: true, owner: me().key };
       newCodes.push(entry);
       existing.unshift(entry);
     }
@@ -1814,7 +1946,7 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
       generateBulkQRPreview(newCodes);
       const msg = `${newCodes.length} code(s) added` + (skipped ? `, ${skipped} skipped (duplicates)` : '');
       showToast(msg);
-      pushCodesToSheet(newCodes).then(() => markCodesSaved(newCodes)).catch(reportSyncError);
+      pushCodesToSheet(newCodes).then(result => { markCodesSaved(newCodes); dropRefusedCodes(result); }).catch(reportSyncError);
     } else {
       showToast('All codes already exist');
     }
@@ -1828,13 +1960,13 @@ document.getElementById('add-code-form').addEventListener('submit', (e) => {
       return;
     }
 
-    const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString(), pending: true };
+    const entry = { code, label, expiry: expiry || null, addedAt: new Date().toISOString(), pending: true, owner: me().key };
     codes.unshift(entry);
     saveCodes(codes);
     generateQRPreview(code, label);
     document.getElementById('code-input').value = '';
     showToast('Code added');
-    pushCodesToSheet([entry]).then(() => markCodesSaved([entry])).catch(reportSyncError);
+    pushCodesToSheet([entry]).then(result => { markCodesSaved([entry]); dropRefusedCodes(result); }).catch(reportSyncError);
   }
 
   document.getElementById('code-label').value = '';
@@ -1980,6 +2112,7 @@ function unusedCodeItem(entry, groupEnabled) {
         <button class="btn btn-small btn-secondary" onclick="copyCodeLink('${code}')">Copy Link</button>
         <button class="btn btn-small btn-secondary" onclick="downloadCodeQR('${code}')">Download QR</button>
         <button class="btn btn-small btn-secondary" data-code-action="move" data-code="${code}">Move</button>
+        <button class="btn btn-small btn-secondary" data-code-action="send" data-code="${code}" data-needs="sendCodes" title="Move this code into another login's bank">Send</button>
         <button class="btn btn-small btn-warning" onclick="deactivateCode('${code}')" title="Mark as handed out / redeemed">Mark Used</button>
         <button class="btn btn-small btn-danger" onclick="removeCode('${code}')">Remove</button>
       </div>
@@ -2005,9 +2138,16 @@ function usedCodeItem(entry) {
   `;
 }
 
+// The codes Active Codes lists: this login's bank, or for the overseer, the bank picked above the list.
+function listedCodes() {
+  const view = codesBankView();
+  return view === '*' ? getCodes() : getCodes().filter(c => ownerOf(c) === view);
+}
+
 function renderCodesList() {
   const list = document.getElementById('codes-list');
-  const codes = getCodes();
+  const codes = listedCodes();
+  const allBanks = codesBankView() === '*';
   updateGroupOptions();
   updateLogFilter();
 
@@ -2018,29 +2158,32 @@ function renderCodesList() {
 
   const groups = new Map();
   codes.forEach(c => {
-    const name = groupOf(c);
-    if (!groups.has(name)) groups.set(name, []);
-    groups.get(name).push(c);
+    const key = groupKey(ownerOf(c), groupOf(c));
+    if (!groups.has(key)) groups.set(key, { owner: ownerOf(c), name: groupOf(c), items: [] });
+    groups.get(key).items.push(c);
   });
-  const names = [...groups.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
+  const sorted = [...groups.values()].sort((a, b) =>
+    bankLabel(a.owner).localeCompare(bankLabel(b.owner)) || (a.name === '') - (b.name === '') || a.name.localeCompare(b.name));
   const collapsed = getCollapsedGroups();
 
-  list.innerHTML = names.map(name => {
-    const items = groups.get(name);
-    const enabled = isGroupEnabled(name);
+  list.innerHTML = sorted.map(({ owner, name, items }) => {
+    const key = groupKey(owner, name);
+    const enabled = isGroupEnabled(owner, name);
     const unused = items.filter(c => c.active !== false);
     const used = items.filter(c => c.active === false);
-    const esc = escapeHtml(name);
+    const tied = groupEvent(owner, name);
     return `
-      <details class="code-group${enabled ? '' : ' is-paused'}" data-group="${esc}"${collapsed.has(name) ? '' : ' open'}>
+      <details class="code-group${enabled ? '' : ' is-paused'}" data-group="${escapeHtml(name)}" data-owner="${escapeHtml(owner)}"${collapsed.has(key) ? '' : ' open'}>
         <summary class="code-group-summary">
           <span class="code-group-name">${escapeHtml(groupDisplayName(name))}</span>
+          ${allBanks ? `<span class="badge badge-bank">${escapeHtml(bankLabel(owner))}</span>` : ''}
           <span class="badge ${enabled ? 'badge-active' : 'badge-inactive'}">${enabled ? 'Enabled' : 'Paused'}</span>
-          ${groupEvent(name) ? `<span class="badge badge-event" title="Redemptions check in to this event">${escapeHtml(groupEvent(name).name)}</span>` : ''}
+          ${tied ? `<span class="badge badge-event" title="Redemptions check in to this event">${escapeHtml(tied.name)}</span>` : ''}
           <span class="code-meta">${unused.length} unused · ${used.length} used</span>
           <span class="code-group-actions">
             <button type="button" class="btn btn-small ${enabled ? 'btn-warning' : 'btn-primary'}" data-group-action="toggle">${enabled ? 'Pause' : 'Enable'}</button>
             <button type="button" class="btn btn-small btn-secondary" data-group-action="rename">Rename</button>
+            ${unused.length ? '<button type="button" class="btn btn-small btn-secondary" data-group-action="send" data-needs="sendCodes" title="Move this group\'s unused codes into another login\'s bank">Send</button>' : ''}
             <button type="button" class="btn btn-small btn-danger" data-group-action="delete">Delete</button>
           </span>
         </summary>
@@ -2073,44 +2216,95 @@ function renderGroupQrs(groupEl) {
   });
 }
 
+// New codes go in this login's own bank, so suggest its own groups.
 function updateGroupOptions() {
-  const names = [...new Set(getCodes().map(groupOf).filter(Boolean))].sort();
+  const mine = getCodes().filter(c => ownerOf(c) === me().key);
+  const names = [...new Set(mine.map(groupOf).filter(Boolean))].sort();
   document.getElementById('group-options').innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+}
+
+function groupFromElement(el) {
+  const group = el.closest('.code-group');
+  return { name: group.dataset.group, owner: group.dataset.owner };
 }
 
 document.getElementById('codes-list').addEventListener('toggle', (e) => {
   const group = e.target.closest && e.target.matches('.code-group') ? e.target : null;
   if (!group) return;
   const collapsed = getCollapsedGroups();
+  const key = groupKey(group.dataset.owner, group.dataset.group);
   if (group.open) {
-    collapsed.delete(group.dataset.group);
+    collapsed.delete(key);
     renderGroupQrs(group);
   } else {
-    collapsed.add(group.dataset.group);
+    collapsed.add(key);
   }
   saveCollapsedGroups(collapsed);
 }, true);
 
 document.getElementById('codes-list').addEventListener('click', async (e) => {
   const groupButton = e.target.closest('[data-group-action]');
-  const codeButton = e.target.closest('[data-code-action="move"]');
+  const codeButton = e.target.closest('[data-code-action]');
   if (groupButton) {
     // Buttons sit inside <summary>, so stop the click from also collapsing the group.
     e.preventDefault();
-    const name = groupButton.closest('.code-group').dataset.group;
+    const { name, owner } = groupFromElement(groupButton);
     const action = groupButton.dataset.groupAction;
-    if (action === 'toggle') await toggleGroup(name);
-    else if (action === 'rename') await renameCodeGroup(name);
-    else if (action === 'delete') await deleteCodeGroup(name);
-  } else if (codeButton) {
+    if (action === 'toggle') await toggleGroup(owner, name);
+    else if (action === 'rename') await renameCodeGroup(owner, name);
+    else if (action === 'delete') await deleteCodeGroup(owner, name);
+    else if (action === 'send') {
+      const codes = getCodes().filter(c => ownerOf(c) === owner && groupOf(c) === name && c.active !== false).map(c => c.code);
+      await sendCodes(codes, owner, `the ${codes.length} unused code${codes.length === 1 ? '' : 's'} in ${groupDisplayName(name)}`);
+    }
+  } else if (codeButton && codeButton.dataset.codeAction === 'move') {
     await moveCodeToGroup(codeButton.dataset.code);
+  } else if (codeButton && codeButton.dataset.codeAction === 'send') {
+    const entry = getCodes().find(c => c.code === codeButton.dataset.code);
+    if (entry) await sendCodes([entry.code], ownerOf(entry), entry.code);
   }
 });
 
-async function toggleGroup(name) {
-  const enable = !isGroupEnabled(name);
+// Moves unused codes into another login's bank. The server only moves codes that are still unused.
+async function sendCodes(codes, fromOwner, description) {
+  if (!codes.length) return;
+  const targets = banks.filter(b => b.enabled && b.key !== fromOwner);
+  if (!targets.length) {
+    showToast('There are no other logins to send codes to. The overseer can add one in Admin Settings.');
+    return;
+  }
+  let target = targets[0];
+  if (targets.length === 1) {
+    if (!confirm(`Send ${description} to ${target.name}? They'll leave this bank and show up in ${target.name}'s.`)) return;
+  } else {
+    const answer = prompt(`Send ${description} to which login?\n${targets.map((b, i) => `${i + 1}. ${b.name}`).join('\n')}\n\nType the number or the name.`);
+    if (answer === null) return;
+    const typed = answer.trim().toLowerCase();
+    target = targets[Number(typed) - 1] || targets.find(b => b.name.toLowerCase() === typed);
+    if (!target) {
+      showToast(`No login called "${answer.trim()}"`);
+      return;
+    }
+  }
   try {
-    const data = await callSheet({ action: 'setGroupEnabled', group: name, enabled: String(enable) });
+    const data = await callSheet({ action: 'transferCodes', codes: JSON.stringify(codes), to: target.key });
+    const skipped = new Set(data.skipped || []);
+    const moved = new Set(codes.filter(c => !skipped.has(c)));
+    // Codes that left a login's own bank drop out of its list; the overseer keeps seeing them, under their new bank.
+    const keep = me().overseer;
+    saveCodes(getCodes().flatMap(c => !moved.has(c.code) ? [c] : keep ? [{ ...c, owner: target.key }] : []));
+    renderCodesList();
+    showToast(`Sent ${data.moved} code${data.moved === 1 ? '' : 's'} to ${data.to}`
+      + (skipped.size ? `. ${skipped.size} weren't sent because they were used or already moved.` : ''));
+  } catch (err) {
+    showToast('Could not send: ' + err.message);
+  }
+}
+
+async function toggleGroup(owner, name) {
+  const enable = !isGroupEnabled(owner, name);
+  try {
+    const data = await callSheet({ action: 'setGroupEnabled', group: name, enabled: String(enable), owner });
     saveGroupStates(data.groups);
     renderCodesList();
     showToast(enable
@@ -2121,12 +2315,12 @@ async function toggleGroup(name) {
   }
 }
 
-async function renameCodeGroup(name) {
+async function renameCodeGroup(owner, name) {
   const next = (prompt(`Rename group "${groupDisplayName(name)}" to:`, name) || '').trim();
   if (!next || next === name) return;
   try {
-    const data = await callSheet({ action: 'renameGroup', oldName: name, newName: next });
-    saveCodes(getCodes().map(c => groupOf(c) === name ? { ...c, label: next } : c));
+    const data = await callSheet({ action: 'renameGroup', oldName: name, newName: next, owner });
+    saveCodes(getCodes().map(c => ownerOf(c) === owner && groupOf(c) === name ? { ...c, label: next } : c));
     saveGroupStates(data.groups);
     renderCodesList();
     showToast(`Renamed to ${next}`);
@@ -2135,17 +2329,18 @@ async function renameCodeGroup(name) {
   }
 }
 
-async function deleteCodeGroup(name) {
-  const codes = getCodes().filter(c => groupOf(c) === name);
+async function deleteCodeGroup(owner, name) {
+  const inGroup = c => ownerOf(c) === owner && groupOf(c) === name;
+  const codes = getCodes().filter(inGroup);
   const used = codes.filter(c => c.active === false).length;
   const detail = `${codes.length} code${codes.length === 1 ? '' : 's'}` + (used ? ` (${used} used, ${codes.length - used} unused)` : '');
   if (!confirm(`Delete "${groupDisplayName(name)}" and its ${detail}? They'll be removed from the sheet too. This can't be undone, but scan log history is kept.`)) return;
   try {
-    const data = await callSheet({ action: 'deleteGroup', group: name });
-    saveCodes(getCodes().filter(c => groupOf(c) !== name));
+    const data = await callSheet({ action: 'deleteGroup', group: name, owner });
+    saveCodes(getCodes().filter(c => !inGroup(c)));
     saveGroupStates(data.groups);
     const collapsed = getCollapsedGroups();
-    collapsed.delete(name);
+    collapsed.delete(groupKey(owner, name));
     saveCollapsedGroups(collapsed);
     renderCodesList();
     showToast(`Deleted ${groupDisplayName(name)} (${data.removed} code${data.removed === 1 ? '' : 's'})`);
@@ -2157,7 +2352,7 @@ async function deleteCodeGroup(name) {
 async function moveCodeToGroup(code) {
   const entry = getCodes().find(c => c.code === code);
   if (!entry) return;
-  const existing = [...new Set(getCodes().map(groupOf).filter(Boolean))].sort();
+  const existing = [...new Set(getCodes().filter(c => ownerOf(c) === ownerOf(entry)).map(groupOf).filter(Boolean))].sort();
   const hint = existing.length ? `\nExisting groups: ${existing.join(', ')}` : '';
   const answer = prompt(`Move ${code} to which group? Leave blank for Ungrouped.${hint}`, groupOf(entry));
   if (answer === null) return;
@@ -2222,7 +2417,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 24;
+const REQUIRED_SCRIPT_VERSION = 29;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -2239,11 +2434,20 @@ async function callSheet(params) {
     showLogin('Your session expired. Please log in again.');
     throw new Error('Not logged in');
   }
+  if (data.forbidden) {
+    if (params.action !== 'whoami') refreshPermissions();
+    throw new Error(data.error);
+  }
   if (data.error === 'Unknown action') {
     throw new Error('Apps Script is outdated — paste the latest google-apps-script.js and redeploy');
   }
   if (data.error) throw new Error(data.error);
   return data;
+}
+
+// The login's permissions may have changed since this page loaded, so a refusal re-checks them.
+function refreshPermissions() {
+  callSheet({ action: 'whoami' }).then(data => setBanks(data.banks, data.me)).catch(() => {});
 }
 
 async function checkScriptVersion() {
@@ -2261,9 +2465,12 @@ async function checkScriptVersion() {
 
 // Requests are chunked to keep URLs short and run one at a time so Apps Script doesn't drop concurrent writes.
 // fromSync marks a background upload: the sheet then refuses codes deleted on another device and lists them.
+// taken: codes already in another login's bank. used: codes that were redeemed before. Neither gets added.
 async function pushCodesToSheet(entries, fromSync) {
   let added = 0;
   const refused = new Set();
+  const taken = new Set();
+  const used = new Set();
   for (let i = 0; i < entries.length; i += 15) {
     const chunk = entries.slice(i, i + 15).map(e => ({
       code: e.code,
@@ -2277,8 +2484,22 @@ async function pushCodesToSheet(entries, fromSync) {
     const data = await callSheet(params);
     added += data.added || 0;
     (data.deleted || []).forEach(c => refused.add(String(c).toUpperCase()));
+    (data.taken || []).forEach(c => taken.add(String(c).toUpperCase()));
+    (data.used || []).forEach(c => used.add(String(c).toUpperCase()));
   }
-  return { added, refused };
+  return { added, refused, taken, used };
+}
+
+// Takes codes the sheet wouldn't add back out of this device's list, and says why.
+function dropRefusedCodes(result) {
+  const dropped = new Set([...result.taken, ...result.used]);
+  if (!dropped.size) return;
+  saveCodes(getCodes().filter(c => !dropped.has(String(c.code).toUpperCase())));
+  renderCodesList();
+  const parts = [];
+  if (result.taken.size) parts.push(`${result.taken.size} already in another login's bank (${[...result.taken].join(', ')})`);
+  if (result.used.size) parts.push(`${result.used.size} already redeemed before (${[...result.used].join(', ')})`);
+  showToast(`Not added: ${parts.join('; ')}`);
 }
 
 // The sheet is the source of truth. The only local codes uploaded are ones added on this device whose
@@ -2287,6 +2508,7 @@ async function syncCodesFromSheet() {
   await checkScriptVersion();
 
   const data = await callSheet({ action: 'getCodes' });
+  setBanks(data.banks, data.me);
   saveGroupStates(data.groups);
   const sheetCodes = (data.codes || []).map(c => ({
     code: String(c.code).trim().toUpperCase(),
@@ -2294,6 +2516,7 @@ async function syncCodesFromSheet() {
     expiry: c.expiry || null,
     addedAt: c.addedAt || '',
     active: c.active !== false,
+    owner: c.owner || '',
   }));
 
   const sheetSet = new Set(sheetCodes.map(c => c.code));
@@ -2303,11 +2526,28 @@ async function syncCodesFromSheet() {
   if (toUpload.length) {
     const result = await pushCodesToSheet(toUpload, true);
     pushed = result.added;
-    kept = toUpload.filter(c => !result.refused.has(String(c.code).toUpperCase())).map(c => ({ ...c, pending: false }));
+    const dropped = new Set([...result.refused, ...result.taken, ...result.used]);
+    kept = toUpload.filter(c => !dropped.has(String(c.code).toUpperCase())).map(c => ({ ...c, pending: false }));
   }
 
   saveCodes([...kept, ...sheetCodes]);
+  announceReceivedCodes(data.received || []);
   return { fromSheet: sheetCodes.length, pushed };
+}
+
+// Says once when another login has sent codes to this one. The first sync on a device just notes where things stand.
+function announceReceivedCodes(received) {
+  const key = `pogo_received_seen_${me().key}`;
+  let seen = null;
+  try { seen = localStorage.getItem(key); } catch {}
+  const latest = received.reduce((max, r) => (r.at > max ? r.at : max), seen || '');
+  try { localStorage.setItem(key, latest || new Date().toISOString()); } catch {}
+  if (seen === null) return;
+  const fresh = received.filter(r => r.at > seen);
+  if (!fresh.length) return;
+  const bySender = new Map();
+  fresh.forEach(r => bySender.set(r.from, (bySender.get(r.from) || 0) + 1));
+  showToast([...bySender].map(([from, n]) => `${n} code${n === 1 ? '' : 's'} received from ${from}`).join(' · '));
 }
 
 function markCodesSaved(entries) {
@@ -2397,6 +2637,8 @@ function renderLogTable(logs) {
           <th>Time</th>
           <th>Code</th>
           <th>Group</th>
+          <th>Bank</th>
+          <th>Shown By</th>
           <th>Trainer</th>
           <th>Device</th>
           <th>OS</th>
@@ -2413,6 +2655,8 @@ function renderLogTable(logs) {
             <td>${new Date(log.timestamp).toLocaleString()}</td>
             <td><strong>${escapeHtml(log.code)}</strong></td>
             <td>${escapeHtml(log.group)}</td>
+            <td>${escapeHtml(log.bank)}</td>
+            <td>${escapeHtml(usernameLabel(log.shownBy))}</td>
             <td>${escapeHtml(log.trainerName)}</td>
             <td>${escapeHtml(log.device)}</td>
             <td>${escapeHtml(log.os)}</td>
@@ -2436,7 +2680,7 @@ function updateLogFilter() {
   const current = select.value;
 
   select.innerHTML = '<option value="all">All Codes</option>' +
-    codes.map(c => `<option value="${c.code}">${c.code}${c.label ? ` - ${c.label}` : ''}</option>`).join('');
+    codes.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(c.code)}${c.label ? ` - ${escapeHtml(c.label)}` : ''}</option>`).join('');
 
   select.value = current;
 }
@@ -2524,13 +2768,14 @@ function displayedGroups() {
 
 function renderDisplayEventPicker() {
   const select = document.getElementById('display-event');
-  const tied = displayedGroups().map(g => (groupEvent(g) || {}).id || '');
+  const bank = displayBank();
+  const tied = displayedGroups().map(g => (groupEvent(bank, g) || {}).id || '');
   const current = tied.every(id => id === tied[0]) ? (tied[0] || '') : 'mixed';
   const events = eventState.events.filter(ev => ev.open || ev.id === current);
   // An event this device hasn't loaded yet still shows by the name the sheet sent with the group.
   if (current && current !== 'mixed' && !events.some(ev => ev.id === current)) {
-    const g = displayedGroups().find(name => (groupEvent(name) || {}).id === current);
-    events.unshift({ id: current, name: groupEvent(g).name, date: '' });
+    const g = displayedGroups().find(name => (groupEvent(bank, name) || {}).id === current);
+    events.unshift({ id: current, name: groupEvent(bank, g).name, date: '' });
   }
   select.innerHTML = '<option value="">Any open event that day</option>'
     + (current === 'mixed' ? '<option value="mixed" disabled>Mixed: groups go to different events</option>' : '')
@@ -2547,7 +2792,7 @@ document.getElementById('display-event').addEventListener('change', async (e) =>
   if (!groups.length) return;
   select.disabled = true;
   try {
-    const data = await callSheet({ action: 'setGroupsEvent', groups: JSON.stringify(groups), eventId: select.value });
+    const data = await callSheet({ action: 'setGroupsEvent', groups: JSON.stringify(groups), eventId: select.value, owner: displayBank() });
     if (data.error) throw new Error(data.error);
     saveGroupStates(data.groups);
     const label = select.value ? select.selectedOptions[0].textContent : 'any open event that day';
@@ -2751,7 +2996,7 @@ function campfireNameGone(name) {
 function campfireHideButton(name, className) {
   if (!trainerKey(name)) return '';
   const hidden = isCampfireHidden(name);
-  return `<button type="button" class="${className}" data-campfire-hide="${escapeHtml(name)}" data-hidden="${hidden}"
+  return `<button type="button" class="${className}" data-campfire-hide="${escapeHtml(name)}" data-hidden="${hidden}" data-needs="campfireManage"
     aria-label="${hidden ? 'Unhide' : 'Hide'} ${escapeHtml(name)}" title="${hidden ? 'Unhide this name' : 'Hide this name from Campfire Exports'}">${hidden ? 'Unhide' : 'Hide'}</button>`;
 }
 
@@ -3146,14 +3391,137 @@ window.addEventListener('hashchange', () => {
   if (getAuthToken()) receiveCampfireFromLink();
 });
 
+// ---------- Admin Settings (overseer only) ----------
+// Logins for other admins: each has its own code bank and the permissions ticked here. Passwords are
+// stored hashed in the Apps Script's Script properties, never in the sheet.
+const adminState = { accounts: [], permissions: [] };
+
+async function loadAccounts() {
+  const list = document.getElementById('account-list');
+  try {
+    const data = await callSheet({ action: 'listAccounts' });
+    adminState.accounts = data.accounts || [];
+    adminState.permissions = data.permissions || [];
+    setBanks(data.banks);
+    renderAccounts();
+  } catch (err) {
+    list.innerHTML = `<p class="empty-state">Couldn't load logins: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderAccounts() {
+  const list = document.getElementById('account-list');
+  if (!adminState.accounts.length) {
+    list.innerHTML = '<p class="empty-state">No other logins yet. Add one below.</p>';
+    return;
+  }
+  const open = new Set([...list.querySelectorAll('.account[open]')].map(d => d.dataset.key));
+  list.innerHTML = adminState.accounts.map(a => `
+    <details class="account${a.enabled ? '' : ' is-off'}" data-key="${escapeHtml(a.key)}"${open.has(a.key) ? ' open' : ''}>
+      <summary class="account-summary">
+        <span class="lottery-name">${escapeHtml(a.name)}</span>
+        <span class="badge ${a.enabled ? 'badge-active' : 'badge-inactive'}">${a.enabled ? 'On' : 'Turned off'}</span>
+        <span class="code-meta">${a.perms.length} of ${adminState.permissions.length} permissions</span>
+      </summary>
+      <div class="account-body">
+        <div class="account-perms">
+          ${adminState.permissions.map(([key, label]) => `
+            <label class="rule-row account-perm">
+              <input type="checkbox" data-perm="${escapeHtml(key)}"${a.perms.includes(key) ? ' checked' : ''}>
+              <span>${escapeHtml(label)}</span>
+            </label>
+          `).join('')}
+        </div>
+        <p class="card-note">Their own code bank, Display and Add Codes are always on. Changes apply on their next tap.</p>
+        <div class="lottery-toolbar-actions">
+          <button type="button" class="btn btn-small btn-secondary" data-account-action="password">Reset Password</button>
+          <button type="button" class="btn btn-small ${a.enabled ? 'btn-warning' : 'btn-primary'}" data-account-action="toggle">${a.enabled ? 'Turn Off' : 'Turn On'}</button>
+          <button type="button" class="btn btn-small btn-danger" data-account-action="delete">Delete</button>
+        </div>
+      </div>
+    </details>
+  `).join('');
+}
+
+async function saveAccountChange(params, message) {
+  const data = await callSheet({ action: 'saveAccount', ...params });
+  adminState.accounts = data.accounts || [];
+  setBanks(data.banks);
+  renderAccounts();
+  if (message) showToast(message);
+}
+
+document.getElementById('account-list').addEventListener('change', async (e) => {
+  const box = e.target.closest('input[data-perm]');
+  if (!box) return;
+  const details = box.closest('.account');
+  const perms = [...details.querySelectorAll('input[data-perm]:checked')].map(i => i.dataset.perm);
+  details.querySelectorAll('input[data-perm]').forEach(i => { i.disabled = true; });
+  try {
+    await saveAccountChange({ username: details.dataset.key, perms: JSON.stringify(perms) }, 'Permissions saved');
+  } catch (err) {
+    showToast('Could not save: ' + err.message);
+    renderAccounts();
+  }
+});
+
+document.getElementById('account-list').addEventListener('click', async (e) => {
+  const button = e.target.closest('[data-account-action]');
+  if (!button) return;
+  const key = button.closest('.account').dataset.key;
+  const account = adminState.accounts.find(a => a.key === key);
+  if (!account) return;
+  const action = button.dataset.accountAction;
+  try {
+    if (action === 'password') {
+      const password = prompt(`New password for ${account.name} (at least 8 characters). They'll be logged out everywhere.`);
+      if (!password) return;
+      await saveAccountChange({ username: key, password }, `${account.name}'s password changed`);
+    } else if (action === 'toggle') {
+      if (account.enabled && !confirm(`Turn off ${account.name}? They're logged out right away and can't log in until you turn them back on. Their codes stay in their bank.`)) return;
+      await saveAccountChange({ username: key, enabled: String(!account.enabled) }, account.enabled ? `${account.name} turned off` : `${account.name} turned on`);
+    } else if (action === 'delete') {
+      if (!confirm(`Delete ${account.name}'s login? All codes in their bank move to yours. Scan logs and check-ins keep their name.`)) return;
+      const data = await callSheet({ action: 'deleteAccount', username: key });
+      adminState.accounts = data.accounts || [];
+      setBanks(data.banks);
+      renderAccounts();
+      await syncAndRender(true);
+      showToast(`${account.name} deleted. ${data.moved} code${data.moved === 1 ? '' : 's'} moved to your bank.`);
+    }
+  } catch (err) {
+    showToast('Could not update login: ' + err.message);
+  }
+});
+
+document.getElementById('account-add-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('account-username').value.trim();
+  const password = document.getElementById('account-password').value;
+  const button = e.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await saveAccountChange({ username, password, create: 'true' }, `${username} can now log in`);
+    e.target.reset();
+    const details = document.querySelector(`#account-list .account[data-key="${CSS.escape(username.toLowerCase())}"]`);
+    if (details) details.open = true;
+  } catch (err) {
+    showToast('Could not add login: ' + err.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // Called by auth.js once a valid admin session exists (after login, or on load with a saved session).
 function onAdminReady() {
+  applyPermissions();
   syncAndRender(true);
   let saved = null;
   try { saved = localStorage.getItem('pogo_active_tab'); } catch {}
   // Add Code, Scan Log, and Community used to be their own tabs; they now live under Settings.
   if (saved === 'scan-log' || saved === 'community') saved = 'settings';
   if (saved === 'add-code') saved = 'settings';
-  activateTab(saved && document.querySelector(`.tab[data-tab="${saved}"]`) ? saved : 'active-codes');
+  const tab = saved && document.querySelector(`.tab[data-tab="${saved}"]`);
+  activateTab(tab && !tab.classList.contains('hidden') ? saved : 'active-codes');
   receiveCampfireFromLink();
 }

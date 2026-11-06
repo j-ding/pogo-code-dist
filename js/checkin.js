@@ -23,6 +23,8 @@ function getDeviceId() {
 }
 
 const eventId = new URLSearchParams(window.location.search).get('event') || '';
+// Whose screen the check-in QR was on, added to the link by the dashboard. Only kept for the record.
+const shownBy = new URLSearchParams(window.location.search).get('by') || '';
 let eventName = '';
 
 function showStep(id) {
@@ -141,7 +143,7 @@ document.getElementById('checkin-form').addEventListener('submit', async (e) => 
   document.getElementById('checkin-error').classList.add('hidden');
 
   try {
-    const data = await checkInWithRetry({ action: 'checkIn', id: eventId, trainerName, deviceId: getDeviceId() }, button);
+    const data = await checkInWithRetry({ action: 'checkIn', id: eventId, trainerName, deviceId: getDeviceId(), by: shownBy }, button);
     if (data.busy) {
       showError('Lots of people are checking in right now. Please tap Check In again.');
       resetButton();

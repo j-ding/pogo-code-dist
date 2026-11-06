@@ -1360,6 +1360,7 @@ header h1 {
 
 .code-group-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -2020,4 +2021,95 @@ header h1 {
 @keyframes toast-in {
   from { opacity: 0; transform: translateX(-50%) translateY(10px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Logins: elements a login can't use (data-needs="perm") are hidden; the server enforces the same rules. */
+body:not(.is-overseer) [data-needs~="overseer"],
+.lacks-sendCodes [data-needs~="sendCodes"],
+.lacks-checkin [data-needs~="checkin"],
+.lacks-checkinRemove [data-needs~="checkinRemove"],
+.lacks-checkinCodes [data-needs~="checkinCodes"],
+.lacks-checkinDelete [data-needs~="checkinDelete"],
+.lacks-lottery [data-needs~="lottery"],
+.lacks-lotteryEdit [data-needs~="lotteryEdit"],
+.lacks-lotteryDelete [data-needs~="lotteryDelete"],
+.lacks-trainers [data-needs~="trainers"],
+.lacks-campfire [data-needs~="campfire"],
+.lacks-campfireManage [data-needs~="campfireManage"],
+.lacks-logs [data-needs~="logs"] {
+  display: none !important;
+}
+
+.logged-in-as {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-top: 6px;
+}
+
+.logged-in-as:empty {
+  display: none;
+}
+
+.badge-bank {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.account {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.account.is-off {
+  opacity: 0.7;
+}
+
+.account-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.account-summary .code-meta {
+  font-size: 0.8rem;
+}
+
+.account-body {
+  padding: 0 12px 12px;
+}
+
+.account-body .card-note {
+  margin: 10px 0;
+}
+
+.account-perms {
+  display: flex;
+  flex-direction: column;
+}
+
+.account-perm {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.account-perm input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.account-add {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
 }

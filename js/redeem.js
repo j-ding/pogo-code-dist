@@ -149,6 +149,8 @@ function proceedWithRedeem(code, trainerName, redeemUrl) {
       referrer: document.referrer || 'direct',
       deviceId: getDeviceId(),
       scanId: newScanId(),
+      // Whose screen the QR was on, added to the link by the dashboard. Only kept for the record.
+      by: getParam('by') || '',
     };
 
     sendScanLog(logData).finally(() => {

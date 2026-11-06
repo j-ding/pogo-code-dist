@@ -1,11 +1,16 @@
-// The Apps Script checks the password and returns a signed token; admin actions send it as `t`.
+// The Apps Script checks the password and returns a signed token plus who logged in (their username, whether
+// they're the overseer, and their permissions); admin actions send the token as `t`.
 const SESSION_KEY = 'pogo_admin_session';
+// Codes cached in this browser belong to whoever was logged in, so they're cleared when that changes.
+const CODE_CACHE_KEYS = ['pogo_codes', 'pogo_groups', 'pogo_group_events'];
+const CACHE_OWNER_KEY = 'pogo_cache_user';
 
 function getSession() {
   for (const store of [localStorage, sessionStorage]) {
     try {
       const session = JSON.parse(store.getItem(SESSION_KEY));
-      if (session && session.token && session.expires > Date.now()) return session;
+      // Sessions from before logins had usernames don't say who they are, so they log in again.
+      if (session && session.token && session.user && session.expires > Date.now()) return session;
     } catch {}
   }
   return null;
@@ -16,11 +21,31 @@ function getAuthToken() {
   return session ? session.token : '';
 }
 
-function saveSession(token, expires, remember) {
+function getCurrentUser() {
+  const session = getSession();
+  return session ? session.user : null;
+}
+
+function saveSession(token, expires, remember, user) {
   clearSession();
   try {
-    (remember ? localStorage : sessionStorage).setItem(SESSION_KEY, JSON.stringify({ token, expires }));
+    (remember ? localStorage : sessionStorage).setItem(SESSION_KEY, JSON.stringify({ token, expires, user }));
   } catch {}
+}
+
+// The server sends the login's current permissions with each sync, so changes reach an open dashboard.
+function updateSessionUser(user) {
+  for (const store of [localStorage, sessionStorage]) {
+    try {
+      const session = JSON.parse(store.getItem(SESSION_KEY));
+      if (session && session.token) store.setItem(SESSION_KEY, JSON.stringify({ ...session, user }));
+    } catch {}
+  }
+}
+
+function clearCodeCache() {
+  CODE_CACHE_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+  try { localStorage.removeItem(CACHE_OWNER_KEY); } catch {}
 }
 
 function clearSession() {
@@ -46,6 +71,7 @@ function showLogin(message) {
 
 function logout() {
   clearSession();
+  clearCodeCache();
   showLogin();
 }
 
@@ -78,7 +104,16 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
         : data.error || 'Login failed');
       return;
     }
-    saveSession(data.token, data.expires, remember);
+    // Scripts from before separate logins don't say who logged in.
+    if (!data.user) {
+      showLogin('The Apps Script is outdated. Paste the latest google-apps-script.js and redeploy.');
+      return;
+    }
+    let cachedFor = null;
+    try { cachedFor = localStorage.getItem(CACHE_OWNER_KEY); } catch {}
+    if (cachedFor !== data.user.key) clearCodeCache();
+    try { localStorage.setItem(CACHE_OWNER_KEY, data.user.key); } catch {}
+    saveSession(data.token, data.expires, remember, data.user);
     document.getElementById('login-pass').value = '';
     showApp();
   } catch {

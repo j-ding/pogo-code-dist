@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.18.0">
+  <meta name="app-version" content="2.19.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.18.0">
+  <link rel="stylesheet" href="css/style.css?v=2.19.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -43,6 +43,7 @@
       <img src="img/north-fulton-icon.png" class="brand-icon" width="320" height="320" alt="">
       <h1>North Fulton PKGO Raids</h1>
       <p class="subtitle">Pokemon Go Code Distribution</p>
+      <p id="logged-in-as" class="logged-in-as"></p>
       <button id="logout-btn" class="btn btn-small btn-secondary logout-btn" onclick="logout()">Log Out</button>
     </header>
 
@@ -71,6 +72,10 @@
             </span>
           </div>
           <p class="card-note">Codes are grouped by their Group. Paused groups stay off the Display tab without marking their codes used.</p>
+          <div id="codes-bank-row" class="lottery-sort hidden">
+            <label for="codes-bank" class="inline-label">Bank</label>
+            <select id="codes-bank" class="inline-date"></select>
+          </div>
           <div id="codes-list" class="code-groups">
             <p class="empty-state">No codes added yet.</p>
           </div>
@@ -92,6 +97,10 @@
               <span>Auto-advance</span>
               <span id="display-auto-status" class="code-meta"></span>
             </label>
+          </div>
+          <div id="display-bank-row" class="display-event hidden" title="Whose codes this screen hands out.">
+            <label for="display-bank">Showing codes from</label>
+            <select id="display-bank"></select>
           </div>
           <div class="display-event" title="Trainers who redeem these codes get checked in to this event, so they're entered in its lotteries.">
             <label for="display-event">Check-ins go to</label>
@@ -145,7 +154,7 @@
             <p id="event-meta" class="card-note"></p>
             <div class="lottery-toolbar-actions">
               <button id="event-toggle" class="btn btn-small btn-secondary"></button>
-              <button id="event-delete" class="btn btn-small btn-danger">Delete</button>
+              <button id="event-delete" class="btn btn-small btn-danger" data-needs="checkinDelete">Delete</button>
             </div>
           </div>
 
@@ -228,7 +237,7 @@
               <p id="lottery-meta" class="card-note"></p>
               <div class="lottery-toolbar-actions">
                 <button id="lottery-edit" class="btn btn-small btn-secondary">Edit</button>
-                <button id="lottery-delete" class="btn btn-small btn-danger">Delete</button>
+                <button id="lottery-delete" class="btn btn-small btn-danger" data-needs="lotteryDelete">Delete</button>
               </div>
             </div>
           </div>
@@ -308,7 +317,7 @@
             <p id="lottery-wheel-readout" class="lottery-wheel-readout"></p>
             <div id="lottery-wheel-winners" class="lottery-wheel-winners hidden"></div>
           </div>
-          <form id="lottery-add-form" class="lottery-add">
+          <form id="lottery-add-form" class="lottery-add" data-needs="lotteryEdit">
             <input type="text" id="lottery-add-name" placeholder="Add a trainer by name" aria-label="Trainer name to add" autocapitalize="off" autocomplete="off" spellcheck="false" required>
             <button type="submit" id="lottery-add-submit" class="btn btn-small btn-secondary">Add</button>
           </form>
@@ -394,7 +403,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" data-needs="logs">
           <h2>Scan Log</h2>
           <div class="log-controls">
             <button id="refresh-log" class="btn btn-secondary">Refresh Log</button>
@@ -434,7 +443,27 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" id="admin-card" data-needs="overseer">
+          <h2>Admin Settings</h2>
+          <p class="card-note">Other logins. Each one gets its own code bank, so unused codes never mix, and can send codes to another bank. Events, lotteries and logs are shared, limited to what you tick. You see every bank from Active Codes.</p>
+          <div id="account-list" class="account-list">
+            <p class="empty-state">Loading logins...</p>
+          </div>
+          <form id="account-add-form" class="lottery-create account-add">
+            <div class="form-group">
+              <label for="account-username">Username</label>
+              <input type="text" id="account-username" maxlength="30" pattern="[A-Za-z0-9_\-]{2,30}" autocapitalize="off" autocomplete="off" spellcheck="false" required>
+            </div>
+            <div class="form-group">
+              <label for="account-password">Password</label>
+              <input type="text" id="account-password" minlength="8" autocomplete="new-password" spellcheck="false" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Add Login</button>
+          </form>
+          <p class="card-note form-note">New logins start with the usual permissions ticked. Open one to change them.</p>
+        </div>
+
+        <div class="card" data-needs="overseer">
           <h2>Settings</h2>
           <form id="settings-form">
             <div class="form-group">
@@ -452,10 +481,10 @@
           <button type="button" id="reset-tab-order" class="btn btn-secondary">Reset Tab Order</button>
         </div>
 
-        <div class="card" id="campfire-card">
+        <div class="card" id="campfire-card" data-needs="campfire">
           <div class="codes-header">
             <h2>Campfire Exports</h2>
-            <label class="btn btn-small btn-primary campfire-upload">
+            <label class="btn btn-small btn-primary campfire-upload" data-needs="campfireManage">
               <input type="file" id="campfire-file" accept=".json,application/json" multiple hidden>
               <span id="campfire-upload-label">Upload JSON</span>
             </label>
@@ -465,7 +494,7 @@
             <select id="campfire-select" aria-label="Choose an uploaded export">
               <option value="">No exports uploaded yet</option>
             </select>
-            <button type="button" id="campfire-delete" class="btn btn-small btn-danger" disabled>Delete</button>
+            <button type="button" id="campfire-delete" class="btn btn-small btn-danger" data-needs="campfireManage" disabled>Delete</button>
           </div>
           <div id="campfire-view" class="campfire-view"></div>
           <details class="campfire-phone">
@@ -487,7 +516,7 @@
           </details>
         </div>
 
-        <div class="card">
+        <div class="card" data-needs="logs">
           <h2>Error Log</h2>
           <div class="log-controls">
             <button id="refresh-errors" class="btn btn-secondary">Refresh Errors</button>
@@ -497,7 +526,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" data-needs="overseer">
           <h2>Google Apps Script Setup</h2>
           <ol class="setup-steps">
             <li>Create a new Google Sheet</li>
@@ -506,7 +535,7 @@
             <li>Click <strong>Deploy &gt; New deployment</strong></li>
             <li>Select <strong>Web app</strong>, set access to <strong>"Anyone"</strong></li>
             <li>Copy the deployment URL into <code>js/site-config.js</code></li>
-            <li>In <strong>Project Settings &gt; Script properties</strong>, add <code>ADMIN_USERNAME</code> and <code>ADMIN_PASSWORD</code></li>
+            <li>In <strong>Project Settings &gt; Script properties</strong>, add <code>ADMIN_USERNAME</code> and <code>ADMIN_PASSWORD</code>. That's the overseer login; add other logins in Admin Settings</li>
           </ol>
           <h3 class="setup-subhead hidden">Event alerts (optional, free)</h3>
           <ol class="setup-steps hidden">
@@ -519,7 +548,7 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.18.0</span>
+      <span>v2.19.0</span>
     </footer>
   </div>
 
@@ -533,9 +562,9 @@
     </div>
   </div>
 
-  <script src="js/site-config.js?v=2.18.0"></script>
-  <script src="js/error-logger.js?v=2.18.0"></script>
-  <script src="js/auth.js?v=2.18.0"></script>
-  <script src="js/app.js?v=2.18.0"></script>
+  <script src="js/site-config.js?v=2.19.0"></script>
+  <script src="js/error-logger.js?v=2.19.0"></script>
+  <script src="js/auth.js?v=2.19.0"></script>
+  <script src="js/app.js?v=2.19.0"></script>
 </body>
 </html>

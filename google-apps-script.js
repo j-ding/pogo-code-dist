@@ -8,7 +8,8 @@
  *  4. Copy the URL into js/site-config.js
  *
  *  5. Project Settings (gear icon) > Script properties > add ADMIN_USERNAME and ADMIN_PASSWORD.
- *     These are the dashboard login and never leave Google.
+ *     This is the overseer login, which can do everything. Other logins are made in the dashboard's
+ *     Admin Settings and are stored in the ACCOUNTS script property, never in the sheet.
  *  6. Optional backups: pick setupWeeklyBackup in the function dropdown and click Run once.
  *  7. Optional event alerts (free OneSignal web push): add ONESIGNAL_APP_ID and ONESIGNAL_API_KEY
  *     to Script properties. The API key stays here; only the app id is sent to the pages.
@@ -17,7 +18,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 28;
+var SCRIPT_VERSION = 29;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -39,13 +40,211 @@ function errorResponse(err) {
 function doGet(e) {
   try {
     var params = (e && e.parameter) || {};
-    if (PUBLIC_ACTIONS.indexOf(params.action) === -1 && !isAuthorized(params.t)) {
-      return jsonOut({ error: 'Unauthorized', unauthorized: true });
+    CURRENT_USER = null;
+    if (PUBLIC_ACTIONS.indexOf(params.action) === -1) {
+      CURRENT_USER = authUser(params.t);
+      if (!CURRENT_USER) return jsonOut({ error: 'Unauthorized', unauthorized: true });
+      if (!isAllowed(params.action)) return jsonOut({ error: 'Your account doesn\'t have permission for that.', forbidden: true });
     }
     return handleGet(e);
   } catch (err) {
     return jsonOut(errorResponse(err));
   }
+}
+
+// ---------- Accounts and permissions ----------
+// The overseer logs in with ADMIN_USERNAME / ADMIN_PASSWORD and can do everything. Other accounts live in the
+// ACCOUNTS script property as { username: { name, salt, hash, enabled, perms } }, so passwords never touch the
+// sheet. Each login has its own code bank: a code's Owner on the Codes tab is the account's username, or blank
+// for the overseer. Events, lotteries and logs are shared, limited by each account's permissions.
+
+var PERMISSIONS = [
+  ['sendCodes', 'Send codes to another bank'],
+  ['checkin', 'Check In: see events, create, close and reopen them'],
+  ['checkinRemove', 'Check In: remove people from an event'],
+  ['checkinCodes', 'Check In: reactivate and show QR for anyone\'s redeemed codes'],
+  ['checkinDelete', 'Check In: delete events'],
+  ['lottery', 'Lottery: see, create and draw, including redraw and undo win'],
+  ['lotteryEdit', 'Lottery: add, rename, remove and mark winners'],
+  ['lotteryDelete', 'Lottery: delete lotteries'],
+  ['trainers', 'Trainers tab'],
+  ['campfire', 'Campfire exports: view'],
+  ['campfireManage', 'Campfire exports: upload, delete and hide names'],
+  ['logs', 'Scan log and error log']
+];
+var DEFAULT_PERMISSIONS = ['sendCodes', 'checkin', 'checkinRemove', 'checkinCodes', 'lottery', 'lotteryEdit', 'logs'];
+
+// '' means any logged-in account. Admin actions missing from this list are overseer-only.
+var ACTION_PERMISSIONS = {
+  whoami: '', getCodes: '', addCodes: '', addCode: '', updateCode: '', removeCode: '', getCodeStatus: '',
+  setGroupEnabled: '', setGroupsEvent: '', renameGroup: '', deleteGroup: '', setCodeGroup: '', getEvents: '',
+  transferCodes: 'sendCodes',
+  getEventAttendees: 'checkin', createEvent: 'checkin', setEventStatus: 'checkin',
+  removeAttendee: 'checkinRemove', deleteEvent: 'checkinDelete',
+  getLotteries: 'lottery', getLotterySources: 'lottery', getLotteryEntrants: 'lottery', createLottery: 'lottery',
+  setLotteryStatus: 'lottery', recordWinner: 'lottery', setWinnerCount: 'lottery', updateLottery: 'lottery',
+  setLotteryRules: 'lottery', skipWinner: 'lottery', unskipEntrant: 'lottery', unmarkWinner: 'lottery',
+  renameEntrant: 'lotteryEdit', removeEntrant: 'lotteryEdit', addEntrant: 'lotteryEdit', markWinner: 'lotteryEdit',
+  deleteLottery: 'lotteryDelete',
+  getTrainerHistory: 'trainers',
+  listCampfire: 'campfire', getCampfire: 'campfire',
+  uploadCampfire: 'campfireManage', deleteCampfire: 'campfireManage', setCampfireHidden: 'campfireManage',
+  getLogs: 'logs', getErrors: 'logs'
+};
+
+// Who made the current admin request, or null on public requests.
+var CURRENT_USER = null;
+
+function isAllowed(action) {
+  if (CURRENT_USER.overseer) return true;
+  if (!ACTION_PERMISSIONS.hasOwnProperty(action)) return false;
+  return ACTION_PERMISSIONS[action] === '' || hasPerm(ACTION_PERMISSIONS[action]);
+}
+
+function hasPerm(perm) {
+  return !!CURRENT_USER && (CURRENT_USER.overseer || CURRENT_USER.perms.indexOf(perm) !== -1);
+}
+
+function overseerName() {
+  return scriptProperty('ADMIN_USERNAME') || 'admin';
+}
+
+function readAccounts() {
+  try { return JSON.parse(scriptProperty('ACCOUNTS') || '{}') || {}; } catch (err) { return {}; }
+}
+
+function saveAccounts(accounts) {
+  PropertiesService.getScriptProperties().setProperty('ACCOUNTS', JSON.stringify(accounts));
+}
+
+function validPerms(list) {
+  var known = PERMISSIONS.map(function(p) { return p[0]; });
+  return (list || []).filter(function(p, i, all) { return known.indexOf(p) !== -1 && all.indexOf(p) === i; });
+}
+
+// key '' is the overseer.
+function userInfo(key, accounts) {
+  if (!key) return { key: '', name: overseerName(), overseer: true, perms: PERMISSIONS.map(function(p) { return p[0]; }) };
+  var account = (accounts || readAccounts())[key];
+  if (!account || !account.enabled) return null;
+  return { key: key, name: account.name || key, overseer: false, perms: validPerms(account.perms) };
+}
+
+// Every bank codes can live in, for the overseer's filter and as places to send codes.
+function bankList() {
+  var accounts = readAccounts();
+  return [{ key: '', name: overseerName(), enabled: true }].concat(Object.keys(accounts).sort().map(function(k) {
+    return { key: k, name: accounts[k].name || k, enabled: !!accounts[k].enabled };
+  }));
+}
+
+function bankName(key) {
+  if (!key) return overseerName();
+  var account = readAccounts()[key];
+  return account ? account.name || key : key;
+}
+
+// The sheet shows banks by name; this turns one back into its key (blank or the overseer's name is '').
+function bankKeyFromName(name) {
+  var key = String(name || '').trim().toLowerCase();
+  return !key || key === overseerName().toLowerCase() ? '' : key;
+}
+
+// The bank a request acts on: the caller's own, or for the overseer, whichever bank they name.
+function actingBank(requested) {
+  if (CURRENT_USER && CURRENT_USER.overseer && requested !== undefined && requested !== null) return bankKeyFromName(requested);
+  return CURRENT_USER ? CURRENT_USER.key : '';
+}
+
+function canTouchCode(owner) {
+  return !!CURRENT_USER && (CURRENT_USER.overseer || owner === CURRENT_USER.key);
+}
+
+// A QR link's by= value: the username of whoever showed it. Only kept for the record, so it's just tidied up.
+function cleanBy(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 30);
+}
+
+function hashPassword(password, salt) {
+  var value = String(password);
+  for (var i = 0; i < 200; i++) value = Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(value, salt));
+  return value;
+}
+
+// Part of every token, so changing a password logs that login out everywhere.
+function passwordStamp(key, accounts) {
+  if (!key) return signValue('overseer:' + (scriptProperty('ADMIN_PASSWORD') || '')).slice(0, 12);
+  var account = (accounts || readAccounts())[key];
+  return account ? String(account.hash).slice(0, 12) : '';
+}
+
+function publicUser(user) {
+  return { key: user.key, name: user.name, overseer: user.overseer, perms: user.perms };
+}
+
+function accountList() {
+  var accounts = readAccounts();
+  return Object.keys(accounts).sort().map(function(k) {
+    return { key: k, name: accounts[k].name || k, enabled: !!accounts[k].enabled, perms: validPerms(accounts[k].perms) };
+  });
+}
+
+function saveAccount(username, password, enabled, perms, isNew) {
+  var name = String(username).trim();
+  var key = name.toLowerCase();
+  if (!/^[a-z0-9_-]{2,30}$/.test(key)) return { error: 'Usernames are 2 to 30 letters, numbers, - or _' };
+  if (key === overseerName().toLowerCase()) return { error: 'That username is the overseer login' };
+  if (password && String(password).length < 8) return { error: 'Passwords need at least 8 characters' };
+  return withLock(function() {
+    var accounts = readAccounts();
+    var account = accounts[key];
+    if (isNew) {
+      if (account) return { error: 'There\'s already an account named ' + account.name };
+      if (!password) return { error: 'Choose a password' };
+      account = { name: name, enabled: true, perms: DEFAULT_PERMISSIONS.slice(), createdAt: new Date().toISOString() };
+    } else if (!account) {
+      return { error: 'Account not found' };
+    }
+    if (password) {
+      account.salt = Utilities.getUuid();
+      account.hash = hashPassword(password, account.salt);
+    }
+    if (enabled !== null) account.enabled = enabled;
+    if (perms) account.perms = validPerms(perms);
+    accounts[key] = account;
+    saveAccounts(accounts);
+    return { success: true, accounts: accountList(), banks: bankList() };
+  });
+}
+
+// The account's unused and used codes move to the overseer's bank, merging into groups of the same name.
+function deleteAccount(username) {
+  var key = String(username).trim().toLowerCase();
+  return withLock(function() {
+    var accounts = readAccounts();
+    if (!accounts[key]) return { error: 'Account not found' };
+    var codes = getCodesSheet();
+    var moved = 0;
+    if (codes.getLastRow() > 1) {
+      var owners = codes.getRange(2, 6, codes.getLastRow() - 1, 1).getValues();
+      for (var i = 0; i < owners.length; i++) {
+        if (bankKeyFromName(owners[i][0]) === key) {
+          codes.getRange(i + 2, 6).setValue('');
+          moved++;
+        }
+      }
+    }
+    var groups = readGroups();
+    var groupsSheet = getGroupsSheet();
+    groups.filter(function(g) { return g.owner === key; }).reverse().forEach(function(g) {
+      var clash = groups.some(function(o) { return o.owner === '' && o.name === g.name; });
+      if (clash) groupsSheet.deleteRow(g.row);
+      else groupsSheet.getRange(g.row, 4).setValue('');
+    });
+    delete accounts[key];
+    saveAccounts(accounts);
+    return { success: true, moved: moved, accounts: accountList(), banks: bankList() };
+  });
 }
 
 // ---------- Admin auth ----------
@@ -78,13 +277,17 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
-// Token = expiry timestamp + HMAC of it. Deleting the SESSION_SECRET script property logs everyone out.
-function isAuthorized(token) {
+// Token = expiry . account key ('' for the overseer) . HMAC of both plus the password stamp. Disabling or
+// deleting an account takes effect on its next request. Deleting the SESSION_SECRET script property logs everyone out.
+function authUser(token) {
   var parts = String(token || '').split('.');
-  if (parts.length !== 2) return false;
+  if (parts.length !== 3) return null;
   var expires = Number(parts[0]);
-  if (!expires || expires < Date.now()) return false;
-  return safeEqual(parts[1], signValue(parts[0]));
+  if (!expires || expires < Date.now()) return null;
+  var key = parts[1];
+  var accounts = key ? readAccounts() : null;
+  if (!safeEqual(parts[2], signValue(parts[0] + '.' + key + '.' + passwordStamp(key, accounts)))) return null;
+  return userInfo(key, accounts);
 }
 
 function login(username, password, remember) {
@@ -92,20 +295,34 @@ function login(username, password, remember) {
   if (!expectedPassword) {
     return { error: 'Admin login is not set up. In Apps Script, open Project Settings > Script properties and add ADMIN_USERNAME and ADMIN_PASSWORD.' };
   }
-  var expectedUser = scriptProperty('ADMIN_USERNAME') || 'admin';
+  var name = String(username).trim().toLowerCase().slice(0, 60);
 
+  // Counted per username, so someone guessing one login's password doesn't lock out the others.
   var cache = CacheService.getScriptCache();
-  var failures = Number(cache.get('login_failures') || 0);
+  var failKey = 'login_failures_' + name;
+  var failures = Number(cache.get(failKey) || 0);
   if (failures >= 10) return { error: 'Too many failed logins. Try again in 10 minutes.' };
 
-  if (!safeEqual(username, expectedUser) || !safeEqual(password, expectedPassword)) {
-    cache.put('login_failures', String(failures + 1), 600);
+  var key = null;
+  var accounts = readAccounts();
+  if (safeEqual(name, overseerName().toLowerCase())) {
+    if (safeEqual(password, expectedPassword)) key = '';
+  } else if (accounts[name] && safeEqual(hashPassword(password, accounts[name].salt), accounts[name].hash)) {
+    if (!accounts[name].enabled) return { error: 'This login is turned off. Ask the overseer to turn it back on.' };
+    key = name;
+  }
+  if (key === null) {
+    cache.put(failKey, String(failures + 1), 600);
     return { error: 'Invalid username or password' };
   }
-  cache.remove('login_failures');
+  cache.remove(failKey);
 
   var expires = Date.now() + (remember ? 30 : 1) * 24 * 60 * 60 * 1000;
-  return { success: true, token: expires + '.' + signValue(expires), expires: expires };
+  var user = userInfo(key, accounts);
+  return {
+    success: true, expires: expires, user: publicUser(user),
+    token: expires + '.' + key + '.' + signValue(expires + '.' + key + '.' + passwordStamp(key, accounts))
+  };
 }
 
 function handleGet(e) {
@@ -135,6 +352,31 @@ function handleGet(e) {
     return logScan(p);
   }
 
+  if (action === 'whoami') {
+    return jsonOut({ me: publicUser(CURRENT_USER), banks: bankList() });
+  }
+
+  if (action === 'listAccounts') {
+    return jsonOut({ accounts: accountList(), permissions: PERMISSIONS, banks: bankList() });
+  }
+
+  if (action === 'saveAccount') {
+    var perms = null;
+    if (p.perms) { try { perms = JSON.parse(p.perms); } catch (err) { return jsonOut({ error: 'Invalid permissions' }); } }
+    var enabled = p.enabled === undefined || p.enabled === '' ? null : p.enabled === 'true';
+    return jsonOut(saveAccount(p.username || '', p.password || '', enabled, perms, p.create === 'true'));
+  }
+
+  if (action === 'deleteAccount') {
+    return jsonOut(deleteAccount(p.username || ''));
+  }
+
+  if (action === 'transferCodes') {
+    var sendList = [];
+    try { sendList = JSON.parse(p.codes || '[]'); } catch (err) { return jsonOut({ error: 'Invalid codes list' }); }
+    return jsonOut(transferCodes(sendList, p.to || ''));
+  }
+
   if (action === 'pushConfig') {
     return jsonOut({ appId: scriptProperty('ONESIGNAL_APP_ID') || '' });
   }
@@ -156,21 +398,21 @@ function handleGet(e) {
   }
 
   if (action === 'setGroupEnabled') {
-    return jsonOut(setGroupEnabled(p.group || '', p.enabled === 'true'));
+    return jsonOut(setGroupEnabled(p.group || '', p.enabled === 'true', actingBank(p.owner)));
   }
 
   if (action === 'setGroupsEvent') {
     var groupList = [];
     try { groupList = JSON.parse(p.groups || '[]'); } catch (err) {}
-    return jsonOut(setGroupsEvent(groupList, p.eventId || ''));
+    return jsonOut(setGroupsEvent(groupList, p.eventId || '', actingBank(p.owner)));
   }
 
   if (action === 'renameGroup') {
-    return jsonOut(renameGroup(p.oldName || '', p.newName || ''));
+    return jsonOut(renameGroup(p.oldName || '', p.newName || '', actingBank(p.owner)));
   }
 
   if (action === 'deleteGroup') {
-    return jsonOut(deleteGroup(p.group || ''));
+    return jsonOut(deleteGroup(p.group || '', actingBank(p.owner)));
   }
 
   if (action === 'setCodeGroup') {
@@ -233,7 +475,7 @@ function handleGet(e) {
   }
 
   if (action === 'checkIn') {
-    return jsonOut(checkIn(p.id || '', p.trainerName || '', p.deviceId || ''));
+    return jsonOut(checkIn(p.id || '', p.trainerName || '', p.deviceId || '', p.by || ''));
   }
 
   if (action === 'createLottery') {
@@ -366,12 +608,15 @@ function handleGet(e) {
 // POST is only used by navigator.sendBeacon from public pages, so it only accepts the two logging actions.
 function doPost(e) {
   try {
+    CURRENT_USER = null;
     var data = JSON.parse(e.postData.contents);
     if (data.action === 'logScan') return logScan(data);
     if (data.action === 'logError') return logError(data);
     // Campfire uploads are too large for a GET URL, so they're the one admin action sent by POST.
     if (data.action === 'uploadCampfire') {
-      if (!isAuthorized(data.t)) return jsonOut({ error: 'Unauthorized', unauthorized: true });
+      CURRENT_USER = authUser(data.t);
+      if (!CURRENT_USER) return jsonOut({ error: 'Unauthorized', unauthorized: true });
+      if (!isAllowed('uploadCampfire')) return jsonOut({ error: 'Your account doesn\'t have permission for that.', forbidden: true });
       return jsonOut(uploadCampfire(data.name || '', data.json || ''));
     }
     return jsonOut({ error: 'Unknown action' });
@@ -589,7 +834,8 @@ function logScan(data) {
   var codeInfo = data.code ? findCodeRow(data.code) : null;
   var timestamp = data.timestamp || new Date().toISOString();
   var checkIns = checkInRows();
-  var targets = codeInfo && data.trainerName ? redeemerEventIds(data.trainerName, timestamp, codeInfo.group, checkIns) : [];
+  var targets = codeInfo && data.trainerName ? redeemerEventIds(data.trainerName, timestamp, codeInfo.group, codeInfo.owner, checkIns) : [];
+  var by = cleanBy(data.by);
 
   return withLock(function() {
     var lastRow = sheet.getLastRow();
@@ -613,12 +859,14 @@ function logScan(data) {
       isRepeat ? 'Yes' : 'No',
       data.deviceId || '',
       data.scanId || '',
-      codeInfo ? codeInfo.group : ''
+      codeInfo ? codeInfo.group : '',
+      codeInfo ? bankName(codeInfo.owner) : '',
+      by
     ]);
 
     // Only real codes have side effects, so a forged logScan can't check people in.
     if (codeInfo && markCodeUsed(codeInfo, data.code)) {
-      addRedeemerToEvents(targets, data.trainerName, timestamp, data.deviceId || '', checkIns.length + 1);
+      addRedeemerToEvents(targets, data.trainerName, timestamp, data.deviceId || '', checkIns.length + 1, by);
     }
     return jsonOut({ success: true, repeat: isRepeat });
   });
@@ -633,7 +881,7 @@ function scanLogSheet() {
   var existing = ss.getSheetByName('ScanLog');
   if (existing) {
     var current = existing.getRange(1, 1, 1, existing.getLastColumn()).getValues()[0];
-    if (current.indexOf('Device ID') !== -1 && current.indexOf('Scan ID') !== -1 && current.indexOf('Group') !== -1) return existing;
+    if (current.indexOf('Device ID') !== -1 && current.indexOf('Scan ID') !== -1 && current.indexOf('Group') !== -1 && current.indexOf('Shown By') !== -1) return existing;
   }
 
   return withLock(function() {
@@ -656,6 +904,9 @@ function scanLogSheet() {
       sheet.getRange(1, 15).setValue('Group');
       backfillScanGroups(sheet);
     }
+    // Bank is whose code it was; Shown By is whose screen it was scanned from. Older scans leave both blank.
+    if (headers.indexOf('Bank') === -1) sheet.getRange(1, 16).setValue('Bank');
+    if (headers.indexOf('Shown By') === -1) sheet.getRange(1, 17).setValue('Shown By');
     return sheet;
   });
 }
@@ -807,8 +1058,9 @@ function sendEventAlert(eventId, message, site) {
 }
 
 // ---------- Code groups ----------
-// A code's group is its Label. Groups tab: Group | Enabled | Event ID. Pausing a group is separate from a
-// code being used, so re-enabling a group never brings back codes that were already redeemed.
+// A code's group is its Label. Groups tab: Group | Enabled | Event ID | Owner. Each bank has its own groups, so a
+// group is its owner plus its name (blank owner is the overseer). Pausing a group is separate from a code being
+// used, so re-enabling a group never brings back codes that were already redeemed.
 // Event ID ties a group to one event: its redemptions check people into that event only, and that
 // event only takes redemptions from its tied groups. Untied groups fall back to matching by date.
 
@@ -817,9 +1069,9 @@ function getGroupsSheet() {
   var sheet = ss.getSheetByName('Groups');
   if (!sheet) {
     sheet = ss.insertSheet('Groups');
-    sheet.appendRow(['Group', 'Enabled', 'Event ID']);
-  } else if (sheet.getLastColumn() < 3) {
-    sheet.getRange(1, 3).setValue('Event ID');
+    sheet.appendRow(['Group', 'Enabled', 'Event ID', 'Owner']);
+  } else if (sheet.getLastColumn() < 4) {
+    sheet.getRange(1, 3, 1, 2).setValues([['Event ID', 'Owner']]);
   }
   return sheet;
 }
@@ -828,21 +1080,29 @@ function readGroups() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Groups');
   if (!sheet) return [];
   return sheet.getDataRange().getValues().slice(1).map(function(row, i) {
-    return { row: i + 2, name: String(row[0] || '').trim(), enabled: row[1] !== 'No', eventId: String(row[2] || '').trim() };
+    return {
+      row: i + 2, name: String(row[0] || '').trim(), enabled: row[1] !== 'No', eventId: String(row[2] || '').trim(),
+      owner: bankKeyFromName(row[3])
+    };
   });
 }
 
+function findGroup(groups, name, owner) {
+  return groups.filter(function(g) { return g.name === name && g.owner === owner; })[0];
+}
+
+// The caller's groups, or every bank's for the overseer.
 function groupsResponse() {
   var names = {};
   readEvents().forEach(function(r) { names[r.event.id] = r.event.name; });
-  return readGroups().map(function(g) {
+  return readGroups().filter(function(g) { return canTouchCode(g.owner); }).map(function(g) {
     var tied = g.eventId && names[g.eventId] !== undefined;
-    return { name: g.name, enabled: g.enabled, eventId: tied ? g.eventId : '', eventName: tied ? names[g.eventId] : '' };
+    return { name: g.name, owner: g.owner, enabled: g.enabled, eventId: tied ? g.eventId : '', eventName: tied ? names[g.eventId] : '' };
   });
 }
 
 // eventId '' unties the groups so their redemptions go back to matching events by date.
-function setGroupsEvent(groups, eventId) {
+function setGroupsEvent(groups, eventId, owner) {
   eventId = String(eventId || '').trim();
   var names = (groups || []).map(function(g) { return String(g).trim(); });
   return withLock(function() {
@@ -850,35 +1110,39 @@ function setGroupsEvent(groups, eventId) {
     var sheet = getGroupsSheet();
     var existing = readGroups();
     names.forEach(function(name) {
-      var row = existing.filter(function(g) { return g.name === name; })[0];
+      var row = findGroup(existing, name, owner);
       if (row) sheet.getRange(row.row, 3).setValue(eventId);
-      else if (eventId) sheet.appendRow([name, 'Yes', eventId]);
+      else if (eventId) sheet.appendRow([name, 'Yes', eventId, owner]);
     });
     return { success: true, groups: groupsResponse() };
   });
 }
 
-// { groupName: eventId } for groups tied to an event that still exists.
+function groupTieKey(owner, name) {
+  return owner + '\n' + name;
+}
+
+// { groupTieKey: eventId } for groups tied to an event that still exists.
 function groupEventMap() {
   var ids = {};
   readEvents().forEach(function(r) { ids[r.event.id] = true; });
   var map = {};
-  readGroups().forEach(function(g) { if (g.eventId && ids[g.eventId]) map[g.name] = g.eventId; });
+  readGroups().forEach(function(g) { if (g.eventId && ids[g.eventId]) map[groupTieKey(g.owner, g.name)] = g.eventId; });
   return map;
 }
 
-function setGroupEnabled(group, enabled) {
+function setGroupEnabled(group, enabled, owner) {
   group = String(group).trim();
   return withLock(function() {
     var sheet = getGroupsSheet();
-    var existing = readGroups().filter(function(g) { return g.name === group; })[0];
+    var existing = findGroup(readGroups(), group, owner);
     if (existing) sheet.getRange(existing.row, 2).setValue(enabled ? 'Yes' : 'No');
-    else sheet.appendRow([group, enabled ? 'Yes' : 'No']);
+    else sheet.appendRow([group, enabled ? 'Yes' : 'No', '', owner]);
     return { success: true, groups: groupsResponse() };
   });
 }
 
-function renameGroup(oldName, newName) {
+function renameGroup(oldName, newName, owner) {
   oldName = String(oldName).trim();
   newName = String(newName).trim().slice(0, 60);
   if (!newName) return { error: 'Group name is required' };
@@ -887,17 +1151,17 @@ function renameGroup(oldName, newName) {
     var codes = getCodesSheet();
     var renamed = 0;
     if (codes.getLastRow() > 1) {
-      var labels = codes.getRange(2, 2, codes.getLastRow() - 1, 1).getValues();
-      for (var i = 0; i < labels.length; i++) {
-        if (String(labels[i][0] || '').trim() === oldName) {
+      var rows = codes.getRange(2, 1, codes.getLastRow() - 1, 6).getValues();
+      for (var i = 0; i < rows.length; i++) {
+        if (String(rows[i][1] || '').trim() === oldName && codeOwner(rows[i]) === owner) {
           codes.getRange(i + 2, 2).setValue(newName);
           renamed++;
         }
       }
     }
     var groups = readGroups();
-    var from = groups.filter(function(g) { return g.name === oldName; })[0];
-    var into = groups.filter(function(g) { return g.name === newName; })[0];
+    var from = findGroup(groups, oldName, owner);
+    var into = findGroup(groups, newName, owner);
     if (from && into) getGroupsSheet().deleteRow(from.row);
     else if (from) getGroupsSheet().getRange(from.row, 1).setValue(newName);
     return { success: true, renamed: renamed, groups: groupsResponse() };
@@ -905,18 +1169,18 @@ function renameGroup(oldName, newName) {
 }
 
 // Deletes every code in the group (used or not) plus its Groups row. ScanLog history is left alone.
-function deleteGroup(group) {
+function deleteGroup(group, owner) {
   group = String(group).trim();
   return withLock(function() {
     var deletedCodes = [];
     var removed = deleteRowsWhere(getCodesSheet(), function(row) {
-      var match = String(row[1] || '').trim() === group;
+      var match = String(row[1] || '').trim() === group && codeOwner(row) === owner;
       if (match) deletedCodes.push(row[0]);
       return match;
     });
     recordDeletedCodes(deletedCodes);
     var groupsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Groups');
-    deleteRowsWhere(groupsSheet, function(row) { return String(row[0] || '').trim() === group; });
+    deleteRowsWhere(groupsSheet, function(row) { return String(row[0] || '').trim() === group && bankKeyFromName(row[3]) === owner; });
     return { success: true, removed: removed, groups: groupsResponse() };
   });
 }
@@ -927,9 +1191,10 @@ function setCodeGroup(code, group) {
   return withLock(function() {
     var sheet = getCodesSheet();
     if (sheet.getLastRow() < 2) return { error: 'Code not found' };
-    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
     for (var i = 0; i < values.length; i++) {
       if (String(values[i][0]).trim().toUpperCase() === target) {
+        if (!canTouchCode(codeOwner(values[i]))) return { error: 'That code is in another bank' };
         sheet.getRange(i + 2, 2).setValue(group);
         return { success: true };
       }
@@ -938,27 +1203,88 @@ function setCodeGroup(code, group) {
   });
 }
 
-// Polled by the Display tab every few seconds, so it only reads the Codes column it needs.
+// Moves unused codes into another bank. Each code is one row, so it can't end up in two banks.
+// CodeTransfers tab: Sent At | Code | Group | From | To | By
+function transferCodes(codes, to) {
+  var target = bankKeyFromName(to);
+  var bank = bankList().filter(function(b) { return b.key === target && b.enabled; })[0];
+  if (!bank) return { error: 'Choose who to send them to' };
+  var wanted = {};
+  (codes || []).forEach(function(c) { wanted[String(c).trim().toUpperCase()] = true; });
+
+  return withLock(function() {
+    var sheet = getCodesSheet();
+    var rows = sheet.getDataRange().getValues();
+    var moved = [];
+    var skipped = [];
+    for (var i = 1; i < rows.length; i++) {
+      var code = String(rows[i][0]).trim().toUpperCase();
+      if (!wanted[code]) continue;
+      delete wanted[code];
+      var owner = codeOwner(rows[i]);
+      if (!canTouchCode(owner) || rows[i][4] === 'No' || owner === target) {
+        skipped.push(code);
+        continue;
+      }
+      sheet.getRange(i + 1, 6).setValue(target);
+      moved.push([new Date().toISOString(), code, plainCell(String(rows[i][1] || '')), bankName(owner), bank.name, CURRENT_USER.name]);
+    }
+    skipped = skipped.concat(Object.keys(wanted));
+    if (moved.length) {
+      var log = codeTransfersSheet();
+      log.getRange(log.getLastRow() + 1, 1, moved.length, 6).setValues(moved);
+    }
+    return { success: true, moved: moved.length, skipped: skipped, to: bank.name };
+  });
+}
+
+function codeTransfersSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('CodeTransfers');
+  if (!sheet) {
+    sheet = ss.insertSheet('CodeTransfers');
+    sheet.appendRow(['Sent At', 'Code', 'Group', 'From', 'To', 'By']);
+  }
+  return sheet;
+}
+
+// Codes sent to this bank in the last two weeks, so the dashboard can say what arrived.
+function recentTransfersTo(key) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CodeTransfers');
+  if (!sheet) return [];
+  var since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  return sheet.getDataRange().getValues().slice(1).filter(function(r) {
+    return bankKeyFromName(r[4]) === key && toIso(r[0]) >= since;
+  }).map(function(r) { return { at: toIso(r[0]), code: String(r[1]), from: String(r[3]), by: String(r[5]) }; });
+}
+
+// Polled by the Display tab every few seconds, so it only reads the Codes columns it needs. Other banks' codes
+// only show to someone allowed to handle them from Check In.
 function getCodeStatus(code) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
   var target = String(code).trim().toUpperCase();
   if (!sheet || !target || sheet.getLastRow() < 2) return { code: target, exists: false, active: false };
-  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i][0]).trim().toUpperCase() === target) {
+      if (!canTouchCode(codeOwner(rows[i])) && !hasPerm('checkinCodes')) break;
       return { code: target, exists: true, active: rows[i][4] !== 'No' };
     }
   }
   return { code: target, exists: false, active: false };
 }
 
+function codeOwner(row) {
+  return bankKeyFromName(row[5]);
+}
+
 function findCodeRow(code) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
   var target = String(code).trim().toUpperCase();
   if (!sheet || !target || sheet.getLastRow() < 2) return null;
-  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
   for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]).trim().toUpperCase() === target) return { row: i + 2, group: String(rows[i][1] || '').trim() };
+    if (String(rows[i][0]).trim().toUpperCase() === target) return { row: i + 2, group: String(rows[i][1] || '').trim(), owner: codeOwner(rows[i]) };
   }
   return null;
 }
@@ -1008,13 +1334,14 @@ function getCodesSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Codes') || ss.insertSheet('Codes');
 
-  var expectedHeaders = ['Code', 'Label', 'Expiry', 'Added At', 'Active'];
+  // Owner is the bank a code belongs to: an account's username, or blank for the overseer.
+  var expectedHeaders = ['Code', 'Label', 'Expiry', 'Added At', 'Active', 'Owner'];
   if (sheet.getLastColumn() === 0) {
     sheet.appendRow(expectedHeaders);
   } else {
-    var headers = sheet.getRange(1, 1, 1, 5).getValues()[0];
-    if (headers[0] !== 'Code' || headers[4] !== 'Active') {
-      sheet.getRange(1, 1, 1, 5).setValues([expectedHeaders]);
+    var headers = sheet.getRange(1, 1, 1, 6).getValues()[0];
+    if (headers[0] !== 'Code' || headers[4] !== 'Active' || headers[5] !== 'Owner') {
+      sheet.getRange(1, 1, 1, 6).setValues([expectedHeaders]);
     }
   }
   return sheet;
@@ -1067,43 +1394,70 @@ function forgetDeletedCodes(codes) {
   deleteRowsWhere(sheet, function(r) { return targets[String(r[0] || '').trim().toUpperCase()]; });
 }
 
+// Codes that show up in the ScanLog, so a code someone already redeemed can't come back as unused.
+function scannedCodes() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('ScanLog');
+  var set = {};
+  if (!sheet || sheet.getLastRow() < 2) return set;
+  sheet.getRange(2, 2, sheet.getLastRow() - 1, 1).getValues().forEach(function(r) {
+    var code = String(r[0] || '').trim().toUpperCase();
+    if (code) set[code] = true;
+  });
+  return set;
+}
+
+// New codes go in the caller's bank. A code already in any bank is never added twice, and one that's been
+// redeemed before (in the ScanLog but no longer on the Codes tab) is refused, both reported back by name.
 // fromSync: the upload came from a device's background Sync rather than the Add Code form, so codes that
 // were deleted elsewhere are refused and reported back for the device to drop.
 function addCodes(list, fromSync) {
+  var owner = CURRENT_USER ? CURRENT_USER.key : '';
   return withLock(function() {
     var sheet = getCodesSheet();
     var existing = {};
     var rows = sheet.getDataRange().getValues();
     for (var i = 1; i < rows.length; i++) {
-      existing[String(rows[i][0]).trim().toUpperCase()] = true;
+      existing[String(rows[i][0]).trim().toUpperCase()] = codeOwner(rows[i]);
     }
     var deleted = readDeletedCodes();
+    var scanned = scannedCodes();
 
     var newRows = [];
     var refused = [];
+    var taken = [];
+    var used = [];
     for (var j = 0; j < list.length; j++) {
       var c = list[j];
       var code = String(c.code || '').trim().toUpperCase();
-      if (!code || existing[code]) continue;
+      if (!code) continue;
+      if (existing.hasOwnProperty(code)) {
+        if (existing[code] !== owner) taken.push(code);
+        continue;
+      }
       if (fromSync && deleted[code]) {
         refused.push(code);
         continue;
       }
-      existing[code] = true;
+      if (scanned[code]) {
+        used.push(code);
+        continue;
+      }
+      existing[code] = owner;
       newRows.push([
         code,
-        c.label || '',
+        plainCell(c.label || ''),
         c.expiry || '',
         c.addedAt || new Date().toISOString(),
-        c.active === false ? 'No' : 'Yes'
+        c.active === false ? 'No' : 'Yes',
+        owner
       ]);
     }
 
     if (newRows.length) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 5).setValues(newRows);
+      sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 6).setValues(newRows);
       if (!fromSync) forgetDeletedCodes(newRows.map(function(r) { return r[0]; }));
     }
-    return { success: true, added: newRows.length, skipped: list.length - newRows.length, deleted: refused };
+    return { success: true, added: newRows.length, skipped: list.length - newRows.length, deleted: refused, taken: taken, used: used };
   });
 }
 
@@ -1120,6 +1474,10 @@ function updateCode(data) {
     var rows = sheet.getDataRange().getValues();
     for (var i = 1; i < rows.length; i++) {
       if (String(rows[i][0]).trim().toUpperCase() === target) {
+        // Reactivating from Check In is allowed on any bank's code for accounts with that permission.
+        if (!canTouchCode(codeOwner(rows[i])) && !(data.active === true && hasPerm('checkinCodes'))) {
+          return { success: false, error: 'That code is in another bank' };
+        }
         if (typeof data.active !== 'undefined') sheet.getRange(i + 1, 5).setValue(data.active ? 'Yes' : 'No');
         return { success: true };
       }
@@ -1133,7 +1491,14 @@ function removeCodeFromSheet(data) {
   if (!target) return jsonOut({ success: false, error: 'No code given' });
   return jsonOut(withLock(function() {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
-    var removed = deleteRowsWhere(sheet, function(r) { return String(r[0]).trim().toUpperCase() === target; });
+    var otherBank = false;
+    var removed = deleteRowsWhere(sheet, function(r) {
+      if (String(r[0]).trim().toUpperCase() !== target) return false;
+      if (canTouchCode(codeOwner(r))) return true;
+      otherBank = true;
+      return false;
+    });
+    if (otherBank) return { success: false, error: 'That code is in another bank' };
     recordDeletedCodes([target]);
     return { success: true, removed: removed };
   }));
@@ -1168,7 +1533,9 @@ function getLogs() {
       referrer: data[i][10],
       repeat: data[i][11] === 'Yes',
       deviceId: data[i][12] || '',
-      group: data[i][14] || ''
+      group: data[i][14] || '',
+      bank: data[i][15] || '',
+      shownBy: data[i][16] || ''
     });
   }
 
@@ -1182,25 +1549,30 @@ function getCodesFromSheet() {
   var sheet = ss.getSheetByName('Codes');
 
   if (!sheet) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ codes: [] }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return jsonOut({ codes: [], groups: groupsResponse(), me: publicUser(CURRENT_USER), banks: bankList(), received: [] });
   }
 
   var data = sheet.getDataRange().getValues();
   var codes = [];
 
+  // Each login gets its own bank; the overseer gets every bank's codes, each marked with its owner.
   for (var i = 1; i < data.length; i++) {
+    var owner = codeOwner(data[i]);
+    if (!canTouchCode(owner)) continue;
     codes.push({
       code: data[i][0],
       label: data[i][1],
       expiry: data[i][2],
       addedAt: data[i][3],
-      active: data[i][4] !== 'No'
+      active: data[i][4] !== 'No',
+      owner: owner
     });
   }
 
-  return jsonOut({ codes: codes, groups: groupsResponse() });
+  return jsonOut({
+    codes: codes, groups: groupsResponse(), me: publicUser(CURRENT_USER), banks: bankList(),
+    received: recentTransfersTo(CURRENT_USER.key)
+  });
 }
 
 function logError(data) {
@@ -1267,9 +1639,9 @@ function checkCooldown(trainerName) {
   var seen = {};
   var recentCodes = [];
 
+  var key = trainerKey(trainerName);
   for (var i = 1; i < data.length; i++) {
-    var rowTrainer = String(data[i][2]).toLowerCase().trim();
-    if (rowTrainer !== trainerName.toLowerCase().trim()) continue;
+    if (!key || trainerKey(data[i][2]) !== key) continue;
 
     var rowTimestamp = new Date(data[i][0]);
     if (rowTimestamp < weekAgo) continue;
@@ -1318,13 +1690,16 @@ function getEventsSheet() {
   return sheet;
 }
 
-// CheckIns tab: Timestamp | Event ID | Trainer Name | Device ID | Source (qr / redeem)
+// CheckIns tab: Timestamp | Event ID | Trainer Name | Device ID | Source (qr / redeem) | Shown By
+// Shown By is the username whose screen the check-in or code QR was scanned from (blank on older rows).
 function getCheckInsSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('CheckIns');
   if (!sheet) {
     sheet = ss.insertSheet('CheckIns');
-    sheet.appendRow(['Timestamp', 'Event ID', 'Trainer Name', 'Device ID', 'Source']);
+    sheet.appendRow(['Timestamp', 'Event ID', 'Trainer Name', 'Device ID', 'Source', 'Shown By']);
+  } else if (sheet.getLastColumn() < 6) {
+    sheet.getRange(1, 6).setValue('Shown By');
   }
   return sheet;
 }
@@ -1389,9 +1764,10 @@ function eventAttendees(id, rows) {
     var key = trainerKey(name);
     if (!key) continue;
     if (!byKey[key]) {
-      byKey[key] = { trainerName: name, redeemed: false, checkedIn: false, firstSeen: toIso(rows[i][0]) };
+      byKey[key] = { trainerName: name, redeemed: false, checkedIn: false, firstSeen: toIso(rows[i][0]), shownBy: '' };
       order.push(key);
     }
+    if (!byKey[key].shownBy && rows[i][5]) byKey[key].shownBy = String(rows[i][5]);
     if (String(rows[i][4]) === 'redeem') byKey[key].redeemed = true;
     else byKey[key].checkedIn = true;
   }
@@ -1441,11 +1817,11 @@ function createEvent(name, date) {
         var key = trainerKey(scans[i][2]);
         if (!key || seen[key] || isNaN(ts.getTime()) || ts < w.since || ts >= w.until) continue;
         seen[key] = true;
-        newRows.push([ts.toISOString(), id, String(scans[i][2]).trim(), String(scans[i][12] || ''), 'redeem']);
+        newRows.push([ts.toISOString(), id, String(scans[i][2]).trim(), String(scans[i][12] || ''), 'redeem', String(scans[i][16] || '')]);
       }
       if (newRows.length) {
         var sheet = getCheckInsSheet();
-        sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 5).setValues(newRows);
+        sheet.getRange(sheet.getLastRow() + 1, 1, newRows.length, 6).setValues(newRows);
         backfilled = newRows.length;
       }
     }
@@ -1512,6 +1888,8 @@ function removeAttendee(id, trainerName) {
 
 // Adds the codes each attendee redeemed during the event (from the ScanLog), so an admin can reactivate
 // one if the trainer's redemption didn't actually go through, and whether they have event alerts on.
+// Each code also says whether it's still on the Codes tab, whether it's active, which bank it's in, and
+// whether this login may reactivate it or show its QR.
 function withRedeemedCodes(ev, attendees) {
   var byKey = {};
   attendees.forEach(function(a) { a.codes = []; byKey[trainerKey(a.trainerName)] = a; });
@@ -1521,16 +1899,28 @@ function withRedeemedCodes(ev, attendees) {
   var w = eventWindow(ev);
   var ties = groupEventMap();
   var hasTies = Object.keys(ties).some(function(g) { return ties[g] === ev.id; });
+  var codeRows = {};
+  var codesSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Codes');
+  if (codesSheet && codesSheet.getLastRow() > 1) {
+    codesSheet.getRange(2, 1, codesSheet.getLastRow() - 1, 6).getValues().forEach(function(r) {
+      codeRows[String(r[0]).trim().toUpperCase()] = { active: r[4] !== 'No', owner: codeOwner(r) };
+    });
+  }
   scanSheet.getDataRange().getValues().slice(1).forEach(function(row) {
     var a = byKey[trainerKey(row[2])];
     var ts = new Date(row[0]);
     if (!a || !row[1] || isNaN(ts.getTime())) return;
-    var tiedTo = ties[String(row[14] || '').trim()] || '';
+    var tiedTo = ties[groupTieKey(bankKeyFromName(row[15]), String(row[14] || '').trim())] || '';
     // Same rule as redeemerEventIds: tied codes belong to their event, the rest go by date.
     if (tiedTo ? tiedTo !== ev.id : (hasTies || ts < w.since || ts >= w.until)) return;
     var code = String(row[1]).trim().toUpperCase();
     if (a.codes.some(function(c) { return c.code === code; })) return;
-    a.codes.push({ code: code, timestamp: ts.toISOString() });
+    var current = codeRows[code];
+    a.codes.push({
+      code: code, timestamp: ts.toISOString(), shownBy: String(row[16] || ''),
+      exists: !!current, active: !!current && current.active, bank: current ? bankName(current.owner) : '',
+      canManage: !!current && (canTouchCode(current.owner) || hasPerm('checkinCodes'))
+    });
   });
   var optedIn = readPushOptIns();
   attendees.forEach(function(a) { a.alertsOn = !!optedIn[trainerKey(a.trainerName)]; });
@@ -1563,7 +1953,7 @@ function checkInRowsSince(sheet, seen) {
   return sheet.getRange(seen + 1, 1, last - seen, 5).getValues();
 }
 
-function checkIn(id, trainerName, deviceId) {
+function checkIn(id, trainerName, deviceId, by) {
   trainerName = String(trainerName).replace(/\s+/g, '');
   if (!/^[A-Za-z0-9]+$/.test(trainerName)) {
     return { success: false, error: 'Trainer names are letters and numbers only' };
@@ -1586,21 +1976,21 @@ function checkIn(id, trainerName, deviceId) {
     // Someone may have checked in while this request waited for the lock.
     var late = checkInOutcome(checkInRowsSince(sheet, rows.length + 1), id, key, deviceId, trackDevice);
     if (late) return late;
-    sheet.appendRow([new Date().toISOString(), id, trainerName, deviceId, 'qr']);
+    sheet.appendRow([new Date().toISOString(), id, trainerName, deviceId, 'qr', cleanBy(by)]);
     return { success: true, alreadyCheckedIn: false };
   });
 }
 
 // The events a redeemed code checks this trainer into. A code from a group tied to an event checks them into
 // that event (any day, while it's open). Other codes go to open events running that day that don't have
-// groups of their own tied to them.
-function redeemerEventIds(trainerName, timestamp, group, rows) {
+// groups of their own tied to them. Groups belong to a bank, so owner says whose group it is.
+function redeemerEventIds(trainerName, timestamp, group, owner, rows) {
   var key = trainerKey(trainerName);
   var ts = new Date(timestamp);
   if (!key || isNaN(ts.getTime())) return [];
 
   var ties = groupEventMap();
-  var tiedEvent = ties[group || ''] || '';
+  var tiedEvent = ties[groupTieKey(owner || '', group || '')] || '';
   var eventsWithTies = {};
   Object.keys(ties).forEach(function(g) { eventsWithTies[ties[g]] = true; });
 
@@ -1622,14 +2012,14 @@ function redeemerEventIds(trainerName, timestamp, group, rows) {
 }
 
 // Caller (logScan) holds the script lock. seen is how many CheckIns sheet rows existed when ids was worked out.
-function addRedeemerToEvents(ids, trainerName, timestamp, deviceId, seen) {
+function addRedeemerToEvents(ids, trainerName, timestamp, deviceId, seen, by) {
   if (!ids.length) return;
   var key = trainerKey(trainerName);
   var sheet = getCheckInsSheet();
   var late = checkInRowsSince(sheet, seen);
   ids.forEach(function(id) {
     var already = late.some(function(row) { return String(row[1]) === id && trainerKey(row[2]) === key; });
-    if (!already) sheet.appendRow([new Date(timestamp).toISOString(), id, String(trainerName).trim(), deviceId, 'redeem']);
+    if (!already) sheet.appendRow([new Date(timestamp).toISOString(), id, String(trainerName).trim(), deviceId, 'redeem', by || '']);
   });
 }
 
@@ -2184,7 +2574,7 @@ function buildEntrants(found) {
 
 // ---------- Trainer history ----------
 
-// TrainerLog tab: Timestamp | Trainer Key | Trainer Name | Change | Where
+// TrainerLog tab: Timestamp | Trainer Key | Trainer Name | Change | Where | By
 // Holds admin changes, which would otherwise leave no trace. Check-ins, redemptions and sign-ups already have
 // timestamped rows of their own, so the public pages never write here and stay as fast as they were.
 function trainerLogSheet() {
@@ -2192,7 +2582,9 @@ function trainerLogSheet() {
   var sheet = ss.getSheetByName('TrainerLog');
   if (!sheet) {
     sheet = ss.insertSheet('TrainerLog');
-    sheet.appendRow(['Timestamp', 'Trainer Key', 'Trainer Name', 'Change', 'Where']);
+    sheet.appendRow(['Timestamp', 'Trainer Key', 'Trainer Name', 'Change', 'Where', 'By']);
+  } else if (sheet.getLastColumn() < 6) {
+    sheet.getRange(1, 6).setValue('By');
   }
   return sheet;
 }
@@ -2210,7 +2602,7 @@ function logTrainerChanges(changes, where) {
     var sheet = trainerLogSheet();
     var now = new Date().toISOString();
     changes.forEach(function(c) {
-      sheet.appendRow([now, trainerKey(c[0]), plainCell(c[0]), plainCell(c[1]), plainCell(where)]);
+      sheet.appendRow([now, trainerKey(c[0]), plainCell(c[0]), plainCell(c[1]), plainCell(where), CURRENT_USER ? CURRENT_USER.name : '']);
     });
   } catch (err) {}
 }
@@ -2269,7 +2661,7 @@ function getTrainerHistory() {
     logSheet.getDataRange().getValues().slice(1).forEach(function(row) {
       var p = person(row[2]);
       if (!p) return;
-      logged(p, row[0], row[3] + ': ' + row[4]);
+      logged(p, row[0], row[3] + ': ' + row[4] + (row[5] ? ' (by ' + row[5] + ')' : ''));
       if (row[3] === 'Won' || row[3] === 'Marked as winner') loggedWins[trainerKey(row[2]) + '|' + row[4]] = true;
     });
   }
