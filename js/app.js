@@ -547,6 +547,40 @@ async function loadLotteries() {
   else document.getElementById('lottery-detail').classList.add('hidden');
 }
 
+// Old lotteries and used-up code groups sit in a collapsed section at the end of their list. Whether it's open
+// is remembered on this device, and it opens by itself when it holds the selected lottery.
+const OLDER_OPEN_KEY = 'pogo_older_open';
+
+function isOlderOpen(key) {
+  try { return (JSON.parse(localStorage.getItem(OLDER_OPEN_KEY)) || []).includes(key); } catch { return false; }
+}
+
+function setOlderOpen(key, open) {
+  let keys = [];
+  try { keys = JSON.parse(localStorage.getItem(OLDER_OPEN_KEY)) || []; } catch {}
+  keys = keys.filter(k => k !== key);
+  if (open) keys.push(key);
+  try { localStorage.setItem(OLDER_OPEN_KEY, JSON.stringify(keys)); } catch {}
+}
+
+function olderSection(key, label, count, inner, forceOpen) {
+  if (!count) return '';
+  return `
+    <details class="older-section" data-older="${key}"${forceOpen ? ' data-forced="1"' : ''}${forceOpen || isOlderOpen(key) ? ' open' : ''}>
+      <summary>${label} (${count})</summary>
+      <div class="older-body">${inner}</div>
+    </details>
+  `;
+}
+
+// A lottery is old once its day is over: the day of its event, or for older lotteries the day it was made.
+function isOldLottery(l) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(l.since || l.createdAt);
+  return !isNaN(day.getTime()) && day < today;
+}
+
 function renderLotteryHistory() {
   const history = document.getElementById('lottery-history');
   if (lotteryState.lotteries.length === 0) {
@@ -554,7 +588,7 @@ function renderLotteryHistory() {
     return;
   }
 
-  history.innerHTML = lotteryState.lotteries.map(l => {
+  const item = l => {
     const source = l.eventId ? lotteryEventName(l) : new Date(l.createdAt).toLocaleDateString();
     const winners = l.winners.length ? ` · Winner${l.winners.length > 1 ? 's' : ''}: ${l.winners.join(', ')}` : '';
     const badge = l.eventId ? '' : `<span class="badge ${l.open ? 'badge-active' : 'badge-inactive'}">${l.open ? 'Open' : 'Closed'}</span>`;
@@ -567,12 +601,22 @@ function renderLotteryHistory() {
         ${badge}
       </button>
     `;
-  }).join('');
+  };
+  const current = lotteryState.lotteries.filter(l => !isOldLottery(l));
+  const old = lotteryState.lotteries.filter(isOldLottery);
+  history.innerHTML = (current.length ? current.map(item).join('') : '<p class="empty-state">No lotteries today. Older ones are below.</p>')
+    + olderSection('lotteries', 'Older lotteries', old.length, old.map(item).join(''), old.some(l => l.id === lotteryState.selectedId));
 
   history.querySelectorAll('.lottery-history-item').forEach(el => {
     el.addEventListener('click', () => selectLottery(el.dataset.id));
   });
 }
+
+document.getElementById('lottery-history').addEventListener('toggle', (e) => {
+  // Opening by itself for the selected lottery isn't the viewer's choice, so only a close is saved then.
+  if (!e.target.matches('.older-section') || (e.target.dataset.forced && e.target.open)) return;
+  setOlderOpen(e.target.dataset.older, e.target.open);
+}, true);
 
 function renderLotteryHeader(lottery) {
   document.getElementById('lottery-title').textContent = lottery.name;
@@ -2166,7 +2210,7 @@ function renderCodesList() {
     bankLabel(a.owner).localeCompare(bankLabel(b.owner)) || (a.name === '') - (b.name === '') || a.name.localeCompare(b.name));
   const collapsed = getCollapsedGroups();
 
-  list.innerHTML = sorted.map(({ owner, name, items }) => {
+  const groupHtml = ({ owner, name, items }) => {
     const key = groupKey(owner, name);
     const enabled = isGroupEnabled(owner, name);
     const unused = items.filter(c => c.active !== false);
@@ -2197,9 +2241,19 @@ function renderCodesList() {
         </div>
       </details>
     `;
-  }).join('');
+  };
+  // Groups with no unused codes left are done with, so they're tucked away below the rest.
+  const usedUp = g => g.items.every(c => c.active === false);
+  const live = sorted.filter(g => !usedUp(g));
+  const done = sorted.filter(usedUp);
+  list.innerHTML = live.map(groupHtml).join('')
+    + olderSection('groups', 'Used-up groups', done.length, done.map(groupHtml).join(''));
 
-  list.querySelectorAll('.code-group[open]').forEach(renderGroupQrs);
+  visibleOpenGroups(list).forEach(renderGroupQrs);
+}
+
+function visibleOpenGroups(root) {
+  return [...root.querySelectorAll('.code-group[open]')].filter(g => !g.closest('.older-section:not([open])'));
 }
 
 // QR thumbnails are only drawn for expanded groups, so big collapsed groups stay cheap.
@@ -2229,6 +2283,11 @@ function groupFromElement(el) {
 }
 
 document.getElementById('codes-list').addEventListener('toggle', (e) => {
+  if (e.target.matches('.older-section')) {
+    setOlderOpen(e.target.dataset.older, e.target.open);
+    if (e.target.open) visibleOpenGroups(e.target).forEach(renderGroupQrs);
+    return;
+  }
   const group = e.target.closest && e.target.matches('.code-group') ? e.target : null;
   if (!group) return;
   const collapsed = getCollapsedGroups();

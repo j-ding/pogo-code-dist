@@ -2113,3 +2113,22 @@ body:not(.is-overseer) [data-needs~="overseer"],
   border-top: 1px solid var(--border);
   padding-top: 12px;
 }
+
+/* Old lotteries and used-up code groups, collapsed at the end of their list. */
+.older-section > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  padding: 8px 2px;
+}
+
+.older-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.code-groups .older-body {
+  gap: 12px;
+}
