@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.20.0">
+  <meta name="app-version" content="2.21.0">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.20.0">
+  <link rel="stylesheet" href="css/style.css?v=2.21.0">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -63,7 +63,7 @@
     <main>
       <!-- Active Codes Tab -->
       <section id="active-codes" class="tab-content active">
-        <div class="card">
+        <div class="card" data-collapse="codes">
           <div class="codes-header">
             <h2>Codes</h2>
             <span class="lottery-toolbar-actions">
@@ -201,7 +201,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" data-collapse="events">
           <h2>Events</h2>
           <div id="event-history" class="lottery-history">
             <p class="empty-state">No events yet.</p>
@@ -227,7 +227,7 @@
           </form>
         </div>
 
-        <div id="lottery-detail" class="card hidden">
+        <div id="lottery-detail" class="card hidden" data-collapse="lottery">
           <div id="lottery-view-header">
             <div class="codes-header">
               <h2 id="lottery-title"></h2>
@@ -335,7 +335,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" data-collapse="lottery-history">
           <h2>History</h2>
           <div id="lottery-history" class="lottery-history">
             <p class="empty-state">No lotteries yet.</p>
@@ -345,7 +345,7 @@
 
       <!-- Trainers Tab -->
       <section id="trainers" class="tab-content">
-        <div class="card">
+        <div class="card" data-collapse="trainers">
           <div class="codes-header">
             <h2>Trainers <span id="trainer-count" class="count-pill">0</span></h2>
             <button id="trainer-refresh" class="btn btn-small btn-secondary">Refresh</button>
@@ -378,7 +378,7 @@
             </div>
             <div class="form-group">
               <label for="code-label">Group (optional)</label>
-              <input type="text" id="code-label" list="group-options" placeholder="e.g. Nov 2026 batch, or Test" maxlength="60" autocomplete="off">
+              <input type="text" id="code-label" list="group-options" placeholder="e.g. Nov 2026 Batch" maxlength="60" autocomplete="off">
               <datalist id="group-options"></datalist>
               <small>Codes with the same group can be paused or enabled together on the Active Codes tab.</small>
             </div>
@@ -403,7 +403,7 @@
           </div>
         </div>
 
-        <div class="card" data-needs="logs">
+        <div class="card" data-needs="logs" data-collapse="scan-log">
           <h2>Scan Log</h2>
           <div class="log-controls">
             <button id="refresh-log" class="btn btn-secondary">Refresh Log</button>
@@ -443,7 +443,7 @@
           </div>
         </div>
 
-        <div class="card" id="admin-card" data-needs="overseer">
+        <div class="card" id="admin-card" data-needs="overseer" data-collapse="admin">
           <h2>Admin Settings</h2>
           <p class="card-note">Other logins. Each one gets its own code bank, so unused codes never mix, and can send codes to another bank. Events, lotteries and logs are shared, limited to what you tick. You see every bank from Active Codes.</p>
           <div id="account-list" class="account-list">
@@ -463,7 +463,24 @@
           <p class="card-note form-note">New logins start with the usual permissions ticked. Open one to change them.</p>
         </div>
 
-        <div class="card" data-needs="overseer">
+        <div class="card" id="audit-card" data-needs="overseer" data-collapse="audit">
+          <div class="codes-header">
+            <h2>Audit Log</h2>
+            <button type="button" id="audit-refresh" class="btn btn-small btn-secondary">Refresh</button>
+          </div>
+          <p class="card-note">Every change made from the dashboard by any login, plus logins. Only you can see this. It shows the latest 500; the sheet's AuditLog tab keeps everything.</p>
+          <div class="log-controls">
+            <select id="audit-who" aria-label="Show changes by">
+              <option value="">Everyone</option>
+            </select>
+            <input type="search" id="audit-search" class="audit-search" placeholder="Search changes" aria-label="Search changes" autocomplete="off">
+          </div>
+          <div id="audit-container" class="audit-container">
+            <p class="empty-state">Loading...</p>
+          </div>
+        </div>
+
+        <div class="card" data-needs="overseer" data-collapse="settings">
           <h2>Settings</h2>
           <form id="settings-form">
             <div class="form-group">
@@ -475,13 +492,13 @@
           </form>
         </div>
 
-        <div class="card">
+        <div class="card" data-collapse="tab-order">
           <h2>Tab Order</h2>
           <p class="card-note">Press and hold any tab, then drag it to a new spot. The order is saved on this device.</p>
           <button type="button" id="reset-tab-order" class="btn btn-secondary">Reset Tab Order</button>
         </div>
 
-        <div class="card" id="campfire-card" data-needs="campfire">
+        <div class="card" id="campfire-card" data-needs="campfire" data-collapse="campfire">
           <div class="codes-header">
             <h2>Campfire Exports</h2>
             <label class="btn btn-small btn-primary campfire-upload" data-needs="campfireManage">
@@ -516,7 +533,7 @@
           </details>
         </div>
 
-        <div class="card" data-needs="logs">
+        <div class="card" data-needs="logs" data-collapse="error-log">
           <h2>Error Log</h2>
           <div class="log-controls">
             <button id="refresh-errors" class="btn btn-secondary">Refresh Errors</button>
@@ -526,7 +543,7 @@
           </div>
         </div>
 
-        <div class="card" data-needs="overseer">
+        <div class="card" data-needs="overseer" data-collapse="setup">
           <h2>Google Apps Script Setup</h2>
           <ol class="setup-steps">
             <li>Create a new Google Sheet</li>
@@ -548,7 +565,7 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.20.0</span>
+      <span>v2.21.0</span>
     </footer>
   </div>
 
@@ -562,9 +579,9 @@
     </div>
   </div>
 
-  <script src="js/site-config.js?v=2.20.0"></script>
-  <script src="js/error-logger.js?v=2.20.0"></script>
-  <script src="js/auth.js?v=2.20.0"></script>
-  <script src="js/app.js?v=2.20.0"></script>
+  <script src="js/site-config.js?v=2.21.0"></script>
+  <script src="js/error-logger.js?v=2.21.0"></script>
+  <script src="js/auth.js?v=2.21.0"></script>
+  <script src="js/app.js?v=2.21.0"></script>
 </body>
 </html>

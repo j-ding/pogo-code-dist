@@ -209,6 +209,44 @@ function showToast(message) {
   setTimeout(() => toast.remove(), 2500);
 }
 
+// Cards marked data-collapse fold down to their header when their title is tapped. Remembered on this device.
+// New-item forms and QR cards aren't marked, so they're always open.
+const COLLAPSED_CARDS_KEY = 'pogo_collapsed_cards';
+
+function getCollapsedCards() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_CARDS_KEY)) || []); } catch { return new Set(); }
+}
+
+function setCardCollapsed(card, collapsed) {
+  card.classList.toggle('is-collapsed', collapsed);
+  card.querySelector('.card-toggle').setAttribute('aria-expanded', String(!collapsed));
+  const saved = getCollapsedCards();
+  if (collapsed) saved.add(card.dataset.collapse);
+  else saved.delete(card.dataset.collapse);
+  try { localStorage.setItem(COLLAPSED_CARDS_KEY, JSON.stringify([...saved])); } catch {}
+}
+
+(function initCollapsibleCards() {
+  const saved = getCollapsedCards();
+  document.querySelectorAll('.card[data-collapse]').forEach(card => {
+    card.firstElementChild.classList.add('card-head');
+    const title = card.querySelector('h2');
+    title.classList.add('card-toggle');
+    title.setAttribute('role', 'button');
+    title.tabIndex = 0;
+    const collapsed = saved.has(card.dataset.collapse);
+    card.classList.toggle('is-collapsed', collapsed);
+    title.setAttribute('aria-expanded', String(!collapsed));
+    const flip = () => setCardCollapsed(card, !card.classList.contains('is-collapsed'));
+    title.addEventListener('click', flip);
+    title.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      flip();
+    });
+  });
+})();
+
 // Tabs
 function activateTab(name) {
   const tab = document.querySelector(`.tab[data-tab="${name}"]`);
@@ -233,7 +271,10 @@ function activateTab(name) {
     if (can('logs')) loadScanLog();
     initCommunity();
     if (can('campfire')) loadCampfireList();
-    if (me().overseer) loadAccounts();
+    if (me().overseer) {
+      loadAccounts();
+      loadAuditLog();
+    }
   }
   if (name === 'checkin') initCheckIn();
   if (name === 'lottery') initLottery();
@@ -1390,6 +1431,9 @@ document.getElementById('lottery-toggle').addEventListener('click', async () => 
 });
 
 function showLotteryEditForm(show) {
+  // The form replaces the card's header, so a folded card opens up to show it.
+  const card = document.getElementById('lottery-detail');
+  if (show && card.classList.contains('is-collapsed')) setCardCollapsed(card, false);
   document.getElementById('lottery-view-header').classList.toggle('hidden', show);
   document.getElementById('lottery-edit-form').classList.toggle('hidden', !show);
   if (!show) return;
@@ -2270,11 +2314,21 @@ function renderGroupQrs(groupEl) {
   });
 }
 
-// New codes go in this login's own bank, so suggest its own groups.
+// A name for this month's batch that says whose it is, like "Ding Nov 2026 Batch", so groups from different
+// logins can't be mixed up when they're shown side by side.
+function suggestedGroupName() {
+  const now = new Date();
+  const month = now.toLocaleString('en-US', { month: 'short' });
+  return [me().name, month, now.getFullYear(), 'Batch'].filter(Boolean).join(' ');
+}
+
+// New codes go in this login's own bank, so suggest this month's batch name, then its own groups.
 function updateGroupOptions() {
   const mine = getCodes().filter(c => ownerOf(c) === me().key);
-  const names = [...new Set(mine.map(groupOf).filter(Boolean))].sort();
+  const suggested = suggestedGroupName();
+  const names = [suggested, ...[...new Set(mine.map(groupOf).filter(Boolean))].sort().filter(n => n !== suggested)];
   document.getElementById('group-options').innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+  document.getElementById('code-label').placeholder = `e.g. ${suggested}`;
 }
 
 function groupFromElement(el) {
@@ -2476,7 +2530,7 @@ function removeCode(code) {
   showToast('Code removed');
 }
 
-const REQUIRED_SCRIPT_VERSION = 29;
+const REQUIRED_SCRIPT_VERSION = 30;
 
 async function callSheet(params) {
   const scriptUrl = getSetting(STORAGE_KEYS.SCRIPT_URL);
@@ -3570,6 +3624,58 @@ document.getElementById('account-add-form').addEventListener('submit', async (e)
     button.disabled = false;
   }
 });
+
+// ---------- Audit log (overseer only) ----------
+const auditState = { entries: [] };
+
+async function loadAuditLog() {
+  const box = document.getElementById('audit-container');
+  if (!auditState.entries.length) box.innerHTML = '<p class="empty-state">Loading...</p>';
+  try {
+    auditState.entries = (await callSheet({ action: 'getAuditLog', limit: '500' })).entries || [];
+    renderAuditLog();
+  } catch (err) {
+    box.innerHTML = `<p class="empty-state">Couldn't load the audit log: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderAuditLog() {
+  const select = document.getElementById('audit-who');
+  const chosen = select.value;
+  const people = [...new Set(auditState.entries.map(e => e.who).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  select.innerHTML = '<option value="">Everyone</option>' + people.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+  select.value = people.includes(chosen) ? chosen : '';
+
+  const query = document.getElementById('audit-search').value.trim().toLowerCase();
+  const shown = auditState.entries.filter(e => (!select.value || e.who === select.value)
+    && (!query || `${e.who} ${e.what} ${e.details}`.toLowerCase().includes(query)));
+  const box = document.getElementById('audit-container');
+  if (!shown.length) {
+    box.innerHTML = `<p class="empty-state">${auditState.entries.length ? 'Nothing matches.' : 'No changes recorded yet.'}</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <table class="log-table audit-table">
+      <thead><tr><th>Time</th><th>Who</th><th>What</th><th>Details</th><th>Result</th></tr></thead>
+      <tbody>
+        ${shown.map(e => `
+          <tr>
+            <td class="audit-time">${escapeHtml(new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }))}</td>
+            <td>${escapeHtml(e.who)}</td>
+            <td>${escapeHtml(e.what)}</td>
+            <td class="audit-details">${escapeHtml(e.details)}</td>
+            <td class="audit-result">${e.result === 'OK' ? '<span class="badge badge-new">OK</span>'
+              : `<span class="badge badge-repeat">Failed</span><span class="code-meta">${escapeHtml(e.result.replace(/^Failed: /, ''))}</span>`}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+document.getElementById('audit-refresh').addEventListener('click', loadAuditLog);
+document.getElementById('audit-who').addEventListener('change', renderAuditLog);
+document.getElementById('audit-search').addEventListener('input', renderAuditLog);
 
 // Called by auth.js once a valid admin session exists (after login, or on load with a saved session).
 function onAdminReady() {

@@ -2132,3 +2132,75 @@ body:not(.is-overseer) [data-needs~="overseer"],
 .code-groups .older-body {
   gap: 12px;
 }
+
+/* Cards that fold down to their header (data-collapse). The triangle matches the code groups'. */
+.card-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.card-toggle::before {
+  content: '\25B8';
+  display: inline-block;
+  width: 1em;
+  margin-right: 6px;
+  color: var(--text-secondary);
+  font-size: 1.2em;
+  line-height: 1;
+  text-align: center;
+  transform: rotate(90deg);
+  transition: transform 0.15s;
+}
+
+.card.is-collapsed .card-toggle::before {
+  transform: none;
+}
+
+.card.is-collapsed > :not(.card-head) {
+  display: none !important;
+}
+
+.card.is-collapsed > h2.card-head,
+.card.is-collapsed > .card-head,
+.card.is-collapsed > .card-head h2,
+.card.is-collapsed > .card-head .codes-header {
+  margin-bottom: 0;
+}
+
+/* Audit log (overseer only) */
+.audit-container {
+  overflow-x: auto;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.audit-search {
+  flex: 1;
+  min-width: 140px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.audit-table .audit-time {
+  white-space: nowrap;
+}
+
+.audit-table .audit-details {
+  min-width: 220px;
+  word-break: break-word;
+}
+
+.audit-table .audit-result .code-meta {
+  display: block;
+  min-width: 140px;
+  margin-top: 4px;
+  white-space: normal;
+}
+
+.audit-table .audit-details {
+  white-space: normal;
+}

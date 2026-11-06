@@ -18,7 +18,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 29;
+var SCRIPT_VERSION = 30;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -41,12 +41,17 @@ function doGet(e) {
   try {
     var params = (e && e.parameter) || {};
     CURRENT_USER = null;
+    var audit = null;
     if (PUBLIC_ACTIONS.indexOf(params.action) === -1) {
       CURRENT_USER = authUser(params.t);
       if (!CURRENT_USER) return jsonOut({ error: 'Unauthorized', unauthorized: true });
       if (!isAllowed(params.action)) return jsonOut({ error: 'Your account doesn\'t have permission for that.', forbidden: true });
+      audit = auditEntry(params);
     }
-    return handleGet(e);
+    var out = handleGet(e);
+    if (audit) recordAudit(CURRENT_USER.name, audit, out);
+    else if (params.action === 'login') recordLogin(params, out);
+    return out;
   } catch (err) {
     return jsonOut(errorResponse(err));
   }
@@ -247,6 +252,133 @@ function deleteAccount(username) {
   });
 }
 
+// ---------- Audit log (overseer only) ----------
+// AuditLog tab: Timestamp | Who | What | Details | Result
+// Every change made from the dashboard, by any login, plus logins and failed logins. Only changes are written,
+// never reads, and never a password. It's written after the change, so a logging problem can't undo or block one.
+
+function auditSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('AuditLog');
+  if (!sheet) {
+    sheet = ss.insertSheet('AuditLog');
+    sheet.appendRow(['Timestamp', 'Who', 'What', 'Details', 'Result']);
+  }
+  return sheet;
+}
+
+function auditList(json) {
+  try { return JSON.parse(json || '[]') || []; } catch (err) { return []; }
+}
+
+// [what, details] for a change, or null for actions that only read. Names are looked up before the change
+// runs, so a deleted event or lottery is still logged by name.
+function auditEntry(p) {
+  function eventName(id) {
+    var found = findEvent(id || '');
+    return found ? '"' + found.event.name + '"' : 'event ' + id;
+  }
+  function lotteryName() {
+    var found = findLottery(p.id || '');
+    return found ? '"' + found.lottery.name + '"' : 'lottery ' + p.id;
+  }
+  var bank = CURRENT_USER.overseer && p.owner !== undefined && bankKeyFromName(p.owner) !== CURRENT_USER.key
+    ? ' (' + bankName(bankKeyFromName(p.owner)) + '\'s bank)' : '';
+  var group = function(name) { return name || 'Ungrouped'; };
+
+  switch (p.action) {
+    case 'addCodes':
+      var added = auditList(p.codes);
+      var labels = added.map(function(c) { return c.label || ''; }).filter(function(l, i, all) { return all.indexOf(l) === i; });
+      return [p.source === 'sync' ? 'Uploaded codes from Sync' : 'Added codes',
+        added.length + ' in ' + labels.map(group).join(', ') + ': ' + added.map(function(c) { return String(c.code).toUpperCase(); }).join(', ')];
+    case 'addCode': return ['Added code', String(p.code || '').toUpperCase() + ' in ' + group(p.label)];
+    case 'updateCode': return [p.active === 'true' ? 'Reactivated code' : 'Marked code used', p.code];
+    case 'removeCode': return ['Removed code', p.code];
+    case 'setCodeGroup': return ['Moved code to a group', p.code + ' to ' + group(p.group)];
+    case 'setGroupEnabled': return [p.enabled === 'true' ? 'Enabled group' : 'Paused group', group(p.group) + bank];
+    case 'setGroupsEvent':
+      var tied = auditList(p.groups).map(group).join(', ');
+      return p.eventId ? ['Tied groups to an event', tied + ' to ' + eventName(p.eventId) + bank] : ['Untied groups from their event', tied + bank];
+    case 'renameGroup': return ['Renamed group', group(p.oldName) + ' to ' + p.newName + bank];
+    case 'deleteGroup': return ['Deleted group and its codes', group(p.group) + bank];
+    case 'transferCodes':
+      var sent = auditList(p.codes);
+      return ['Sent codes', sent.length + ' to ' + bankName(bankKeyFromName(p.to)) + ': ' + sent.join(', ')];
+    case 'createEvent': return ['Created event', '"' + p.name + '" on ' + String(p.date || '').slice(0, 10)];
+    case 'setEventStatus': return [p.open === 'true' ? 'Reopened check-in' : 'Closed check-in', eventName(p.id)];
+    case 'deleteEvent': return ['Deleted event', eventName(p.id)];
+    case 'removeAttendee': return ['Removed from event', p.trainerName + ' from ' + eventName(p.id)];
+    case 'sendAlert': return ['Sent event alert', eventName(p.id) + ': ' + p.message];
+    case 'createLottery': return ['Created lottery', '"' + p.name + '"'];
+    case 'updateLottery': return ['Edited lottery', lotteryName() + ', now "' + p.name + '"'];
+    case 'setLotteryStatus': return [p.open === 'true' ? 'Reopened lottery' : 'Closed lottery', lotteryName()];
+    case 'setWinnerCount': return ['Changed winner count', lotteryName() + ' to ' + p.count];
+    case 'setLotteryRules': return ['Changed draw rules', lotteryName()];
+    case 'recordWinner': return ['Drew a winner', p.trainerName + ' in ' + lotteryName()];
+    case 'markWinner': return ['Marked as winner', p.trainerName + ' in ' + lotteryName()];
+    case 'unmarkWinner': return ['Undid a win', p.trainerName + ' in ' + lotteryName()];
+    case 'skipWinner': return ['Skipped a winner', p.trainerName + ' in ' + lotteryName()];
+    case 'unskipEntrant': return ['Restored to the draw', p.trainerName + ' in ' + lotteryName()];
+    case 'addEntrant': return ['Added to lottery', p.trainerName + ' to ' + lotteryName()];
+    case 'removeEntrant': return ['Removed from lottery', p.trainerName + ' from ' + lotteryName()];
+    case 'renameEntrant': return ['Renamed entrant', p.oldName + ' to ' + p.newName + ' in ' + lotteryName()];
+    case 'deleteLottery': return ['Deleted lottery', lotteryName()];
+    case 'deleteCampfire':
+      var upload = listCampfire().exports.filter(function(x) { return x.id === String(p.id); })[0];
+      return ['Deleted Campfire upload', upload ? '"' + upload.name + '"' : p.id];
+    case 'setCampfireHidden': return [p.hidden === 'true' ? 'Hid a name in Campfire' : 'Unhid a name in Campfire', p.name];
+    case 'saveAccount':
+      if (p.create === 'true') return ['Added login', p.username];
+      var changes = [];
+      if (p.password) changes.push('reset password');
+      if (p.enabled === 'true') changes.push('turned on');
+      if (p.enabled === 'false') changes.push('turned off');
+      if (p.perms) changes.push('permissions now: ' + (validPerms(auditList(p.perms)).join(', ') || 'none'));
+      return ['Changed login', p.username + ': ' + changes.join('; ')];
+    case 'deleteAccount': return ['Deleted login', p.username];
+  }
+  return null;
+}
+
+function recordAudit(who, entry, out) {
+  try {
+    var result = 'OK';
+    try {
+      var body = JSON.parse(out.getContent());
+      if (body.error) result = 'Failed: ' + body.error;
+    } catch (err) {}
+    auditSheet().appendRow([new Date().toISOString(), plainCell(who), plainCell(entry[0]), plainCell(String(entry[1]).slice(0, 1000)), plainCell(result)]);
+  } catch (err) {}
+}
+
+function recordLogin(p, out) {
+  try {
+    var body = JSON.parse(out.getContent());
+    if (body.success) recordAudit(body.user.name, ['Logged in', p.remember === 'true' ? 'Remember me on' : ''], out);
+    else {
+      // Filed under the login's own spelling when the username is a real one, so the filter shows one name per login.
+      var typed = String(p.username || '').trim().slice(0, 40);
+      var key = bankKeyFromName(typed);
+      var who = !key ? overseerName() : readAccounts()[key] ? bankName(key) : typed;
+      recordAudit(who, ['Failed login', ''], out);
+    }
+  } catch (err) {}
+}
+
+// Newest first. limit keeps the response small; the sheet keeps everything.
+function getAuditLog(limit) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('AuditLog');
+  if (!sheet || sheet.getLastRow() < 2) return { entries: [] };
+  var count = Math.min(sheet.getLastRow() - 1, Math.max(1, Math.min(2000, parseInt(limit, 10) || 500)));
+  var rows = sheet.getRange(sheet.getLastRow() - count + 1, 1, count, 5).getValues();
+  return {
+    entries: rows.reverse().map(function(r) {
+      return { at: toIso(r[0]), who: String(r[1]), what: String(r[2]), details: String(r[3]), result: String(r[4]) };
+    })
+  };
+}
+
 // ---------- Admin auth ----------
 
 function scriptProperty(key) {
@@ -354,6 +486,10 @@ function handleGet(e) {
 
   if (action === 'whoami') {
     return jsonOut({ me: publicUser(CURRENT_USER), banks: bankList() });
+  }
+
+  if (action === 'getAuditLog') {
+    return jsonOut(getAuditLog(p.limit));
   }
 
   if (action === 'listAccounts') {
@@ -617,7 +753,9 @@ function doPost(e) {
       CURRENT_USER = authUser(data.t);
       if (!CURRENT_USER) return jsonOut({ error: 'Unauthorized', unauthorized: true });
       if (!isAllowed('uploadCampfire')) return jsonOut({ error: 'Your account doesn\'t have permission for that.', forbidden: true });
-      return jsonOut(uploadCampfire(data.name || '', data.json || ''));
+      var uploaded = jsonOut(uploadCampfire(data.name || '', data.json || ''));
+      recordAudit(CURRENT_USER.name, ['Uploaded Campfire export', '"' + String(data.name || '').slice(0, 120) + '"'], uploaded);
+      return uploaded;
     }
     return jsonOut({ error: 'Unknown action' });
   } catch (err) {
