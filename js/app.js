@@ -2859,6 +2859,11 @@ let displayIndex = 0;
 function initDisplay() {
   const codes = getDisplayCodes();
   if (codes.length === 0) {
+    const bank = displayBank();
+    document.getElementById('display-empty-text').textContent = bank !== me().key
+      ? `${bankLabel(bank)}'s bank has no unused codes in enabled groups. Pick another bank above.`
+      : 'No codes to display. Add codes first.';
+    stopDisplayPolling();
     document.getElementById('display-empty').classList.remove('hidden');
     document.getElementById('display-viewer').classList.add('hidden');
     return;

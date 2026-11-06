@@ -2213,3 +2213,7 @@ body:not(.is-overseer) [data-needs~="overseer"],
   border-radius: var(--radius-sm);
   margin-bottom: 16px;
 }
+
+.display-bank-row {
+  margin-bottom: 12px;
+}

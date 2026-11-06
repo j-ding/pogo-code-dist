@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="app-version" content="2.22.0">
+  <meta name="app-version" content="2.22.1">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PoGo Code Dist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.22.0">
+  <link rel="stylesheet" href="css/style.css?v=2.22.1">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -84,8 +84,13 @@
 
       <!-- Display Tab -->
       <section id="display" class="tab-content">
+        <!-- Outside the viewer, so the overseer can switch banks even when the chosen one has nothing to show. -->
+        <div id="display-bank-row" class="display-event display-bank-row hidden" title="Whose codes this screen hands out.">
+          <label for="display-bank">Showing codes from</label>
+          <select id="display-bank"></select>
+        </div>
         <div id="display-empty" class="card">
-          <p class="empty-state">No codes to display. Add codes first.</p>
+          <p id="display-empty-text" class="empty-state">No codes to display. Add codes first.</p>
         </div>
         <div id="display-viewer" class="display-viewer hidden">
           <div class="display-topbar">
@@ -97,10 +102,6 @@
               <span>Auto-advance</span>
               <span id="display-auto-status" class="code-meta"></span>
             </label>
-          </div>
-          <div id="display-bank-row" class="display-event hidden" title="Whose codes this screen hands out.">
-            <label for="display-bank">Showing codes from</label>
-            <select id="display-bank"></select>
           </div>
           <div class="display-event" title="Trainers who redeem these codes get checked in to this event, so they're entered in its lotteries.">
             <label for="display-event">Check-ins go to</label>
@@ -565,7 +566,7 @@
       </section>
     </main>
     <footer class="app-footer">
-      <span>v2.22.0</span>
+      <span>v2.22.1</span>
     </footer>
   </div>
 
@@ -579,9 +580,9 @@
     </div>
   </div>
 
-  <script src="js/site-config.js?v=2.22.0"></script>
-  <script src="js/error-logger.js?v=2.22.0"></script>
-  <script src="js/auth.js?v=2.22.0"></script>
-  <script src="js/app.js?v=2.22.0"></script>
+  <script src="js/site-config.js?v=2.22.1"></script>
+  <script src="js/error-logger.js?v=2.22.1"></script>
+  <script src="js/auth.js?v=2.22.1"></script>
+  <script src="js/app.js?v=2.22.1"></script>
 </body>
 </html>
