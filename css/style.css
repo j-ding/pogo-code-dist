@@ -2204,3 +2204,12 @@ body:not(.is-overseer) [data-needs~="overseer"],
 .audit-table .audit-details {
   white-space: normal;
 }
+
+/* Rewards picture on the redeem page, shown above the trainer name box. */
+.rewards-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
