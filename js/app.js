@@ -1036,6 +1036,11 @@ function winnerCountOf(lottery) {
   return lottery.winnerCount || 1;
 }
 
+// Matches the Apps Script's limit in setWinnerCount and markWinner.
+const WINNER_COUNT_LIMIT = 100;
+document.getElementById('lottery-winner-count').innerHTML =
+  Array.from({ length: WINNER_COUNT_LIMIT }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+
 function updateDrawButton(lottery) {
   const button = document.getElementById('lottery-draw');
   const allButton = document.getElementById('lottery-draw-all');

@@ -18,7 +18,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 31;
+var SCRIPT_VERSION = 32;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -2307,9 +2307,12 @@ function recordWinner(id, trainerName) {
   });
 }
 
+// Matches the dashboard's winner count dropdown.
+var MAX_WINNERS = 100;
+
 function setWinnerCount(id, count) {
   count = parseInt(count, 10);
-  if (!(count >= 1 && count <= 10)) return { error: 'Winner count must be between 1 and 10' };
+  if (!(count >= 1 && count <= MAX_WINNERS)) return { error: 'Winner count must be between 1 and ' + MAX_WINNERS };
 
   return withLock(function() {
     var found = findLottery(id);
@@ -2516,7 +2519,7 @@ function markWinner(id, trainerName) {
     if (!entrant) return trainerName + ' is not on this lottery\'s list';
     var winners = found.lottery.winners;
     if (winners.some(function(w) { return trainerKey(w) === key; })) return;
-    if (winners.length >= 10) return 'A lottery can have at most 10 winners';
+    if (winners.length >= MAX_WINNERS) return 'A lottery can have at most ' + MAX_WINNERS + ' winners';
     winners.push(entrant.trainerName);
     if (winners.length > found.lottery.winnerCount) {
       getLotteriesSheet().getRange(found.row, 8).setValue(winners.length);
