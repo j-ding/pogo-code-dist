@@ -18,7 +18,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 33;
+var SCRIPT_VERSION = 34;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -1697,8 +1697,10 @@ function getCodesFromSheet() {
 
   var data = sheet.getDataRange().getValues();
   var codes = [];
+  var scanned = scannedCodes();
 
   // Each login gets its own bank; the overseer gets every bank's codes, each marked with its owner.
+  // claimed: the code has a trainer in the ScanLog (scanned, or added by hand on Check In).
   for (var i = 1; i < data.length; i++) {
     var owner = codeOwner(data[i]);
     if (!canTouchCode(owner)) continue;
@@ -1708,7 +1710,8 @@ function getCodesFromSheet() {
       expiry: data[i][2],
       addedAt: data[i][3],
       active: data[i][4] !== 'No',
-      owner: owner
+      owner: owner,
+      claimed: !!scanned[String(data[i][0]).trim().toUpperCase()]
     });
   }
 

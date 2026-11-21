@@ -2233,3 +2233,53 @@ body:not(.is-overseer) [data-needs~="overseer"],
 .event-manual .card-note {
   margin-bottom: 8px;
 }
+
+/* Couldn't scan: codes with no trainer yet, listed under the Code box. */
+.manual-suggest {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: -4px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.manual-suggest.hidden {
+  display: none;
+}
+
+.manual-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manual-suggest-item:last-child {
+  border-bottom: none;
+}
+
+.manual-suggest-item:hover,
+.manual-suggest-item:focus {
+  background: var(--bg-card);
+  outline: none;
+}
+
+.manual-suggest-item .badge {
+  margin-left: auto;
+}
+
+.manual-suggest-empty {
+  padding: 8px 10px;
+}

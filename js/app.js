@@ -1548,6 +1548,8 @@ async function loadEvents() {
 async function initCheckIn() {
   const dateInput = document.getElementById('event-date');
   if (!dateInput.value) dateInput.value = todayInputValue();
+  // Scans on trainers' phones claim codes, so bring the code list up to date for the Couldn't scan suggestions.
+  refreshCodesQuietly().then(fillManualCodeOptions);
   await loadEvents();
 
   let saved = null;
@@ -1957,13 +1959,55 @@ document.getElementById('event-delete').addEventListener('click', async () => {
 document.getElementById('event-refresh').addEventListener('click', loadEventAttendees);
 
 // Couldn't scan: records a code as redeemed by a trainer, and checks them in to the event on screen.
-// Suggests this login's codes, used ones first, since those are usually the ones handed out by hand.
+// Suggests this login's codes that no trainer has redeemed yet, used ones first, since those are usually the
+// ones handed out by hand.
+// The list under the Code box is drawn here rather than with a <datalist>, which iPhones show without the
+// Active / Not active badge.
+let manualCodeChoices = [];
+
 function fillManualCodeOptions() {
-  const codes = getCodes().filter(c => ownerOf(c) === me().key || me().overseer);
+  const codes = getCodes().filter(c => !c.claimed && (ownerOf(c) === me().key || me().overseer));
   codes.sort((a, b) => (a.active !== false) - (b.active !== false) || String(a.code).localeCompare(String(b.code)));
-  document.getElementById('event-manual-codes').innerHTML = codes.map(c =>
-    `<option value="${escapeHtml(c.code)}">${escapeHtml(`${c.active === false ? 'used' : 'unused'}${groupOf(c) ? ` · ${groupOf(c)}` : ''}`)}</option>`).join('');
+  manualCodeChoices = codes;
+  if (!document.getElementById('event-manual-suggest').classList.contains('hidden')) renderManualSuggestions();
 }
+
+function renderManualSuggestions() {
+  const box = document.getElementById('event-manual-suggest');
+  const typed = document.getElementById('event-manual-code').value.trim().toUpperCase();
+  const shown = manualCodeChoices.filter(c => !typed || String(c.code).toUpperCase().includes(typed));
+  box.innerHTML = shown.length ? shown.map(c => `
+    <button type="button" class="manual-suggest-item" role="option" data-code="${escapeHtml(c.code)}">
+      <span class="attendee-code-value">${escapeHtml(c.code)}</span>
+      ${groupOf(c) ? `<span class="code-meta">${escapeHtml(groupOf(c))}</span>` : ''}
+      ${c.active === false ? '<span class="badge badge-inactive">Not active</span>' : '<span class="badge badge-active">Active</span>'}
+    </button>
+  `).join('') : `<p class="code-meta manual-suggest-empty">${manualCodeChoices.length ? 'No matching codes without a trainer.' : 'All your codes already have a trainer.'}</p>`;
+  box.classList.remove('hidden');
+}
+
+function hideManualSuggestions() {
+  document.getElementById('event-manual-suggest').classList.add('hidden');
+}
+
+(function initManualSuggestions() {
+  const input = document.getElementById('event-manual-code');
+  input.addEventListener('focus', renderManualSuggestions);
+  input.addEventListener('input', renderManualSuggestions);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideManualSuggestions(); });
+  // Let a tap on a suggestion land before the list closes.
+  input.addEventListener('blur', () => setTimeout(() => {
+    if (!document.getElementById('event-manual-suggest').contains(document.activeElement)) hideManualSuggestions();
+  }, 150));
+  document.getElementById('event-manual-suggest').addEventListener('click', (e) => {
+    const item = e.target.closest('.manual-suggest-item');
+    if (!item) return;
+    input.value = item.dataset.code;
+    hideManualSuggestions();
+    const name = document.getElementById('event-manual-name');
+    (name.value.trim() ? document.getElementById('event-manual-submit') : name).focus();
+  });
+})();
 
 // From a code's Assign button on Active Codes: open Check In with the code filled in.
 function startManualRedemption(code) {
@@ -2000,8 +2044,9 @@ document.getElementById('event-manual-form').addEventListener('submit', async (e
     ev.attendeeCount = eventState.attendees.length;
     const codes = getCodes();
     const entry = codes.find(c => c.code === code);
-    if (entry && entry.active !== false) {
+    if (entry) {
       entry.active = false;
+      entry.claimed = true;
       saveCodes(codes);
     }
     renderEventAttendees();
@@ -2009,6 +2054,7 @@ document.getElementById('event-manual-form').addEventListener('submit', async (e
     fillManualCodeOptions();
     nameInput.value = '';
     codeInput.value = '';
+    hideManualSuggestions();
     showToast(data.checkedIn ? `${trainerName} checked in with ${code}` : `${code} recorded for ${trainerName}, who was already checked in`);
   } catch (err) {
     showToast('Could not add: ' + err.message);
@@ -2249,6 +2295,11 @@ function codeMeta(entry) {
   ].filter(Boolean).join(' · ');
 }
 
+// Only on codes no trainer has redeemed yet; once one has, the code already belongs to them.
+function assignButton(code) {
+  return `<button class="btn btn-small btn-secondary" data-code-action="assign" data-code="${code}" data-needs="checkin" title="Record this code as redeemed by a trainer who couldn't scan it">Assign</button>`;
+}
+
 function unusedCodeItem(entry, groupEnabled) {
   const isExpired = entry.expiry && new Date(entry.expiry) < new Date();
   const badge = !groupEnabled ? '<span class="badge badge-inactive">Paused</span>'
@@ -2268,7 +2319,7 @@ function unusedCodeItem(entry, groupEnabled) {
         <button class="btn btn-small btn-secondary" onclick="downloadCodeQR('${code}')">Download QR</button>
         <button class="btn btn-small btn-secondary" data-code-action="move" data-code="${code}">Move</button>
         <button class="btn btn-small btn-secondary" data-code-action="send" data-code="${code}" data-needs="sendCodes" title="Move this code into another login's bank">Send</button>
-        <button class="btn btn-small btn-secondary" data-code-action="assign" data-code="${code}" data-needs="checkin" title="Record this code as redeemed by a trainer who couldn't scan it">Assign</button>
+        ${entry.claimed ? '' : assignButton(code)}
         <button class="btn btn-small btn-warning" onclick="deactivateCode('${code}')" title="Mark as handed out / redeemed">Mark Used</button>
         <button class="btn btn-small btn-danger" onclick="removeCode('${code}')">Remove</button>
       </div>
@@ -2287,7 +2338,7 @@ function usedCodeItem(entry) {
       </div>
       <div class="code-item-actions">
         <button class="btn btn-small btn-secondary" onclick="reactivateCode('${code}')">Reactivate</button>
-        <button class="btn btn-small btn-secondary" data-code-action="assign" data-code="${code}" data-needs="checkin" title="Record this code as redeemed by a trainer who couldn't scan it">Assign</button>
+        ${entry.claimed ? '' : assignButton(code)}
         <button class="btn btn-small btn-secondary" data-code-action="move" data-code="${code}">Move</button>
         <button class="btn btn-small btn-danger" onclick="removeCode('${code}')">Remove</button>
       </div>
@@ -2701,6 +2752,7 @@ async function syncCodesFromSheet() {
     addedAt: c.addedAt || '',
     active: c.active !== false,
     owner: c.owner || '',
+    claimed: !!c.claimed,
   }));
 
   const sheetSet = new Set(sheetCodes.map(c => c.code));
