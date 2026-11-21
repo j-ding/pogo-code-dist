@@ -1161,6 +1161,8 @@ header h1 {
 
 .attendee-code {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
   align-items: center;
   gap: 8px;
   padding: 4px 6px 4px 10px;
@@ -2216,4 +2218,18 @@ body:not(.is-overseer) [data-needs~="overseer"],
 
 .display-bank-row {
   margin-bottom: 12px;
+}
+
+/* Check In: adding a code someone redeemed without scanning. */
+.event-manual {
+  margin: 4px 0 16px;
+}
+
+.event-manual h3 {
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.event-manual .card-note {
+  margin-bottom: 8px;
 }

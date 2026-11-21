@@ -1613,6 +1613,7 @@ function selectEvent(id) {
 
   renderEventHistory();
   loadEventAttendees();
+  fillManualCodeOptions();
 }
 
 async function loadEventAttendees() {
@@ -1955,6 +1956,67 @@ document.getElementById('event-delete').addEventListener('click', async () => {
 
 document.getElementById('event-refresh').addEventListener('click', loadEventAttendees);
 
+// Couldn't scan: records a code as redeemed by a trainer, and checks them in to the event on screen.
+// Suggests this login's codes, used ones first, since those are usually the ones handed out by hand.
+function fillManualCodeOptions() {
+  const codes = getCodes().filter(c => ownerOf(c) === me().key || me().overseer);
+  codes.sort((a, b) => (a.active !== false) - (b.active !== false) || String(a.code).localeCompare(String(b.code)));
+  document.getElementById('event-manual-codes').innerHTML = codes.map(c =>
+    `<option value="${escapeHtml(c.code)}">${escapeHtml(`${c.active === false ? 'used' : 'unused'}${groupOf(c) ? ` · ${groupOf(c)}` : ''}`)}</option>`).join('');
+}
+
+// From a code's Assign button on Active Codes: open Check In with the code filled in.
+function startManualRedemption(code) {
+  activateTab('checkin');
+  document.getElementById('event-manual-code').value = code;
+  setTimeout(() => {
+    if (!selectedEvent()) {
+      showToast('Create or pick an event first, then add the trainer there.');
+      return;
+    }
+    const name = document.getElementById('event-manual-name');
+    name.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    name.focus({ preventScroll: true });
+  }, 400);
+}
+
+document.getElementById('event-manual-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const ev = selectedEvent();
+  if (!ev) return;
+  const nameInput = document.getElementById('event-manual-name');
+  const codeInput = document.getElementById('event-manual-code');
+  const trainerName = nameInput.value.replace(/\s+/g, '');
+  const code = codeInput.value.trim().toUpperCase();
+  if (!/^[A-Za-z0-9]+$/.test(trainerName)) {
+    showToast('Trainer names are letters and numbers only');
+    return;
+  }
+  const button = document.getElementById('event-manual-submit');
+  button.disabled = true;
+  try {
+    const data = await callSheet({ action: 'assignCode', id: ev.id, trainerName, code });
+    eventState.attendees = data.attendees || [];
+    ev.attendeeCount = eventState.attendees.length;
+    const codes = getCodes();
+    const entry = codes.find(c => c.code === code);
+    if (entry && entry.active !== false) {
+      entry.active = false;
+      saveCodes(codes);
+    }
+    renderEventAttendees();
+    renderEventHistory();
+    fillManualCodeOptions();
+    nameInput.value = '';
+    codeInput.value = '';
+    showToast(data.checkedIn ? `${trainerName} checked in with ${code}` : `${code} recorded for ${trainerName}, who was already checked in`);
+  } catch (err) {
+    showToast('Could not add: ' + err.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 document.getElementById('event-copy-link').addEventListener('click', () => {
   if (!eventState.selectedId) return;
   navigator.clipboard.writeText(getCheckInUrl(eventState.selectedId)).then(() => showToast('Check-in link copied'));
@@ -2206,6 +2268,7 @@ function unusedCodeItem(entry, groupEnabled) {
         <button class="btn btn-small btn-secondary" onclick="downloadCodeQR('${code}')">Download QR</button>
         <button class="btn btn-small btn-secondary" data-code-action="move" data-code="${code}">Move</button>
         <button class="btn btn-small btn-secondary" data-code-action="send" data-code="${code}" data-needs="sendCodes" title="Move this code into another login's bank">Send</button>
+        <button class="btn btn-small btn-secondary" data-code-action="assign" data-code="${code}" data-needs="checkin" title="Record this code as redeemed by a trainer who couldn't scan it">Assign</button>
         <button class="btn btn-small btn-warning" onclick="deactivateCode('${code}')" title="Mark as handed out / redeemed">Mark Used</button>
         <button class="btn btn-small btn-danger" onclick="removeCode('${code}')">Remove</button>
       </div>
@@ -2224,6 +2287,7 @@ function usedCodeItem(entry) {
       </div>
       <div class="code-item-actions">
         <button class="btn btn-small btn-secondary" onclick="reactivateCode('${code}')">Reactivate</button>
+        <button class="btn btn-small btn-secondary" data-code-action="assign" data-code="${code}" data-needs="checkin" title="Record this code as redeemed by a trainer who couldn't scan it">Assign</button>
         <button class="btn btn-small btn-secondary" data-code-action="move" data-code="${code}">Move</button>
         <button class="btn btn-small btn-danger" onclick="removeCode('${code}')">Remove</button>
       </div>
@@ -2377,6 +2441,8 @@ document.getElementById('codes-list').addEventListener('click', async (e) => {
     }
   } else if (codeButton && codeButton.dataset.codeAction === 'move') {
     await moveCodeToGroup(codeButton.dataset.code);
+  } else if (codeButton && codeButton.dataset.codeAction === 'assign') {
+    startManualRedemption(codeButton.dataset.code);
   } else if (codeButton && codeButton.dataset.codeAction === 'send') {
     const entry = getCodes().find(c => c.code === codeButton.dataset.code);
     if (entry) await sendCodes([entry.code], ownerOf(entry), entry.code);

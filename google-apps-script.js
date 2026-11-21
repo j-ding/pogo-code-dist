@@ -18,7 +18,7 @@
  * Bump SCRIPT_VERSION whenever the site starts depending on a new action.
  */
 
-var SCRIPT_VERSION = 32;
+var SCRIPT_VERSION = 33;
 
 // Everything else requires an admin token from login().
 var PUBLIC_ACTIONS = ['ping', 'login', 'getEvent', 'checkIn', 'getLottery', 'joinLottery', 'checkCooldown', 'checkRedemption', 'logScan', 'pushConfig', 'pushOptIn', 'getAlert'];
@@ -85,7 +85,7 @@ var ACTION_PERMISSIONS = {
   setGroupEnabled: '', setGroupsEvent: '', renameGroup: '', deleteGroup: '', setCodeGroup: '', getEvents: '',
   transferCodes: 'sendCodes',
   getEventAttendees: 'checkin', createEvent: 'checkin', setEventStatus: 'checkin',
-  removeAttendee: 'checkinRemove', deleteEvent: 'checkinDelete',
+  removeAttendee: 'checkinRemove', deleteEvent: 'checkinDelete', assignCode: 'checkin',
   getLotteries: 'lottery', getLotterySources: 'lottery', getLotteryEntrants: 'lottery', createLottery: 'lottery',
   setLotteryStatus: 'lottery', recordWinner: 'lottery', setWinnerCount: 'lottery', updateLottery: 'lottery',
   setLotteryRules: 'lottery', skipWinner: 'lottery', unskipEntrant: 'lottery', unmarkWinner: 'lottery',
@@ -309,6 +309,7 @@ function auditEntry(p) {
     case 'setEventStatus': return [p.open === 'true' ? 'Reopened check-in' : 'Closed check-in', eventName(p.id)];
     case 'deleteEvent': return ['Deleted event', eventName(p.id)];
     case 'removeAttendee': return ['Removed from event', p.trainerName + ' from ' + eventName(p.id)];
+    case 'assignCode': return ['Tied a code to a trainer', String(p.code || '').toUpperCase() + ' to ' + p.trainerName + ' at ' + eventName(p.id)];
     case 'sendAlert': return ['Sent event alert', eventName(p.id) + ': ' + p.message];
     case 'createLottery': return ['Created lottery', '"' + p.name + '"'];
     case 'updateLottery': return ['Edited lottery', lotteryName() + ', now "' + p.name + '"'];
@@ -608,6 +609,10 @@ function handleGet(e) {
 
   if (action === 'removeAttendee') {
     return jsonOut(removeAttendee(p.id || '', p.trainerName || ''));
+  }
+
+  if (action === 'assignCode') {
+    return jsonOut(assignCode(p.id || '', p.trainerName || '', p.code || ''));
   }
 
   if (action === 'checkIn') {
@@ -2024,6 +2029,45 @@ function removeAttendee(id, trainerName) {
   });
 }
 
+// For a code someone redeemed without scanning (typed in, or sent to them): records it as theirs the way a
+// scan would have, so it counts toward their weekly limit, shows in their history, and checks them in to this
+// event and so into its lotteries. The ScanLog row's Referrer is "manual:<event id>" and Device is "Added by hand",
+// which is how the event's code list finds it on any day. Works on closed events too, since it's after the fact.
+function assignCode(id, trainerName, code) {
+  trainerName = String(trainerName).replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9]+$/.test(trainerName)) return { error: 'Trainer names are letters and numbers only' };
+  var target = String(code).trim().toUpperCase();
+  if (!target) return { error: 'Enter the code they used' };
+  var key = trainerKey(trainerName);
+  var scans = scanLogSheet(); // May take the lock itself to add columns, so it's fetched first.
+
+  return withLock(function() {
+    var found = findEvent(id);
+    if (!found) return { error: 'Event not found' };
+    var codeInfo = findCodeRow(target);
+    if (!codeInfo) return { error: target + ' isn\'t one of the codes on the Codes tab' };
+    if (!canTouchCode(codeInfo.owner) && !hasPerm('checkinCodes')) return { error: 'That code is in another bank' };
+
+    var rows = scans.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][1]).trim().toUpperCase() !== target) continue;
+      if (trainerKey(rows[i][2]) === key) return { error: target + ' is already recorded for ' + String(rows[i][2]) };
+      return { error: target + ' was already redeemed by ' + String(rows[i][2]) };
+    }
+
+    var now = new Date().toISOString();
+    var by = cleanBy(CURRENT_USER.name);
+    scans.appendRow([now, target, trainerName, 'Added by hand', '', '', '', '', '', '', 'manual:' + id, 'No', '', 'manual-' + Utilities.getUuid(),
+      textCell(codeInfo.group), bankName(codeInfo.owner), by]);
+    markCodeUsed(codeInfo, target);
+
+    var already = checkInRows().some(function(r) { return String(r[1]) === id && trainerKey(r[2]) === key; });
+    if (!already) getCheckInsSheet().appendRow([now, id, trainerName, '', 'redeem', by]);
+    logTrainerChanges([[trainerName, 'Code ' + target + ' added by hand']], found.event.name);
+    return { success: true, checkedIn: !already, attendees: withRedeemedCodes(found.event, eventAttendees(id)) };
+  });
+}
+
 // Adds the codes each attendee redeemed during the event (from the ScanLog), so an admin can reactivate
 // one if the trainer's redemption didn't actually go through, and whether they have event alerts on.
 // Each code also says whether it's still on the Codes tab, whether it's active, which bank it's in, and
@@ -2049,8 +2093,10 @@ function withRedeemedCodes(ev, attendees) {
     var ts = new Date(row[0]);
     if (!a || !row[1] || isNaN(ts.getTime())) return;
     var tiedTo = ties[groupTieKey(bankKeyFromName(row[15]), cellText(row[14]))] || '';
-    // Same rule as redeemerEventIds: tied codes belong to their event, the rest go by date.
-    if (tiedTo ? tiedTo !== ev.id : (hasTies || ts < w.since || ts >= w.until)) return;
+    // Codes added by hand belong to the event they were added at. Otherwise the same rule as redeemerEventIds:
+    // tied codes belong to their event, the rest go by date.
+    var manualFor = /^manual:/.test(String(row[10])) ? String(row[10]).slice(7) : '';
+    if (manualFor ? manualFor !== ev.id : tiedTo ? tiedTo !== ev.id : (hasTies || ts < w.since || ts >= w.until)) return;
     var code = String(row[1]).trim().toUpperCase();
     if (a.codes.some(function(c) { return c.code === code; })) return;
     var current = codeRows[code];
